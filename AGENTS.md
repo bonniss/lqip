@@ -32,16 +32,61 @@ Done:
 - `Strategies\LqipStrategy` interface, one class per mode
   (`src/Strategies/*.php`); `PlaceholderGenerator::extend()` lets callers
   register a new mode or override a built-in one.
+- `LqipResult` value object: strategies return a tagged value (`css` or
+  `css_var`) rather than a bare string, because `css_only` produces something
+  that is *not* a `background-image` value. `forFile()`/`forBytes()` keep
+  their old signatures and now throw `NotCssRepresentable` for a non-CSS
+  mode; `resultForFile()`/`resultForBytes()` are the richer siblings. That
+  throw sits deliberately outside `resultForBytes()`'s `catch (Throwable)`,
+  which exists only to make a broken *image* fail softly as null.
+- `css_only` strategy — leanrada-style single-integer placeholder, ~13 chars.
+  Codec is GD-free and lives in `Support\LqipInteger` + `Support\Oklab`, so
+  the bit layout is testable without images; verified against the published
+  reference value `192900`.
+- `Support\DominantColor` — shared by `dominant_color` and `css_only`.
 - PHPUnit test suite (`vendor/bin/phpunit`) — synthetic GD-generated images
   in-test, no binary fixtures.
 - MIT license, `composer.json`, README with usage + options table.
 
+Measurements behind those choices (40 real photos from `ateliersgam`, 16px
+long edge, characters of the value actually sent over the wire):
+
+| mode / variant | chars | RMSE |
+|---|---|---|
+| `dominant_color` | 32 | 56.3 |
+| `gradient` | 256 | (samples only 2x2) |
+| `blur` webp q25 *(default)* | 131 | 28.3 |
+| `blur` webp q50 *(old default)* | 138 | 27.3 |
+| `blur` **jpg** q50 | 998 | — |
+| `blur` avif q50 | 478 | — |
+| `css_only` | 13 | — |
+
+- AVIF loses badly at this size: 4x larger than WebP and 280x slower
+  (27ms vs 0.1ms per image), because container overhead dominates. Ruled out.
+- The JPEG fallback costs ~9x WebP. `gradient`'s only real niche.
+- Gaussian passes matter more than `quality`: 0/1/2/3 passes give
+  125/93/84/79 bytes. Two passes stays the default — a multi-scale check
+  showed blur preserves overall layout (2x2 grid RMSE 3.2 vs 3.0 unblurred)
+  and only discards the high-frequency detail that would look blocky anyway.
+- `css_only` degenerates on this corpus: ~half of 25 photos produced six
+  identical cells, i.e. a flat colour. Inherent to the format — a cell only
+  changes bucket when its Oklab L differs from the base by more than 1/3.
+
 Not done (roadmap, in rough priority order):
+- Ship a `css_only` decode stylesheet (`resources/`). Not started, and note
+  the licence blocker: leanrada's repo has **no licence file**, so its
+  stylesheet is all-rights-reserved and must not be vendored into this MIT
+  package — any stylesheet here has to be written independently from the bit
+  layout, which is a data format rather than expressive code. Also the one
+  artifact PHPUnit cannot verify; it needs manual browser checking.
 - `thumbhash` strategy — wrap `srwiez/thumbhash` (pure PHP, GD/Imagick both
   work), aimed at headless/API consumers who already run client JS.
-- `css_only` strategy — leanrada-style single-integer CSS-decoded placeholder
-  (`calc()/round()/mod()/oklab()`, zero JS, smallest payload). Label clearly
-  as experimental/modern-browsers-only.
+- `on_transparency` option (`ignore`|`skip`). `css_only` currently ignores
+  alpha like every other mode, deviating from the reference, which skips
+  transparent images entirely.
+- `resolveStrategy()` silently falls back to `blur` for an unknown mode. The
+  cost of a typo went up now that `css-only` (wrong separator) yields a
+  data URI instead of an integer. Consider throwing or warning instead.
 - Static/manual override mechanism — a way for a caller to supply their own
   fixed placeholder value and skip generation entirely (useful for logos/
   icons where auto-generation looks bad, or brand-color consistency).
