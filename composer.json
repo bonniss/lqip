@@ -1,0 +1,23 @@
+{
+    "name": "bonniss26/lqip",
+    "description": "Framework-agnostic LQIP (low-quality image placeholder) generator - dominant-color, CSS gradient, and blurred data-URI strategies.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.0",
+        "ext-gd": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.0 || ^10.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Bonniss26\\Lqip\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Bonniss26\\Lqip\\Tests\\": "tests/"
+        }
+    }
+}
