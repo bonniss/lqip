@@ -22,6 +22,56 @@ class PlaceholderGeneratorTest extends TestCase
         $this->assertHexCloseTo('#e04020', $matches[1]);
     }
 
+    /**
+     * Exact-output pin, deliberately stricter than assertHexCloseTo above.
+     * The dominant-colour computation is shared with other strategies, so a
+     * refactor of it must not shift these bytes at all - a tolerance-based
+     * assertion is too loose to notice.
+     */
+    public function testDominantColorProducesExactKnownOutput(): void
+    {
+        $cases = [
+            [0xE0, 0x40, 0x20, 'linear-gradient(#e44224,#e44224)'],
+            [0x00, 0xAA, 0xFF, 'linear-gradient(#04aafc,#04aafc)'],
+            [0x10, 0x20, 0x30, 'linear-gradient(#142234,#142234)'],
+        ];
+
+        foreach ($cases as [$r, $g, $b, $expected]) {
+            $this->assertSame(
+                $expected,
+                PlaceholderGenerator::forBytes($this->makeSolidImagePng($r, $g, $b), ['mode' => 'dominant_color']),
+                sprintf('solid #%02x%02x%02x', $r, $g, $b)
+            );
+        }
+    }
+
+    /**
+     * When two colours cover exactly the same number of pixels, arsort() is
+     * stable (PHP 8.0+) so the tie falls back to insertion order, which is the
+     * `for x { for y }` scan order - i.e. the leftmost colour wins. Flipping the
+     * loop nesting during a refactor would silently flip the result here.
+     */
+    public function testDominantColorResolvesTiesByScanOrder(): void
+    {
+        $this->assertSame(
+            'linear-gradient(#fc0204,#fc0204)',
+            PlaceholderGenerator::forBytes(
+                $this->makeVerticalSplitPng([0xFF, 0x00, 0x00], [0x00, 0x00, 0xFF]),
+                ['mode' => 'dominant_color']
+            ),
+            'red on the left must win the 32/32 tie'
+        );
+
+        $this->assertSame(
+            'linear-gradient(#0402fc,#0402fc)',
+            PlaceholderGenerator::forBytes(
+                $this->makeVerticalSplitPng([0x00, 0x00, 0xFF], [0xFF, 0x00, 0x00]),
+                ['mode' => 'dominant_color']
+            ),
+            'blue on the left must win the same tie once the halves swap'
+        );
+    }
+
     public function testGradientReturnsFourRadialGradientsSampledFromCorners(): void
     {
         $bytes = $this->makeQuadrantImagePng();
@@ -187,6 +237,22 @@ class PlaceholderGeneratorTest extends TestCase
     {
         $image = imagecreatetruecolor($w, $h);
         imagefill($image, 0, 0, imagecolorallocate($image, $r, $g, $b));
+
+        return $this->encodePng($image);
+    }
+
+    /**
+     * An 8x8 image split into two solid halves of exactly 32 pixels each, so the
+     * two colors tie on pixel count and only scan order can break it.
+     *
+     * @param array{0:int,1:int,2:int} $left
+     * @param array{0:int,1:int,2:int} $right
+     */
+    private function makeVerticalSplitPng(array $left, array $right): string
+    {
+        $image = imagecreatetruecolor(8, 8);
+        imagefilledrectangle($image, 0, 0, 3, 7, imagecolorallocate($image, ...$left));
+        imagefilledrectangle($image, 4, 0, 7, 7, imagecolorallocate($image, ...$right));
 
         return $this->encodePng($image);
     }
