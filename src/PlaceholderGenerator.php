@@ -7,14 +7,24 @@ use Bonniss26\Lqip\Strategies\LqipStrategy;
 use Throwable;
 
 /**
- * Returns a single value usable inside a CSS `background-image` list (e.g.
- * `url('data:...')` or `radial-gradient(...),radial-gradient(...)`) for a
- * blurred/gradient/flat-color placeholder. Every mode - including
- * dominant_color, via a same-color-both-stops `linear-gradient()` - returns
- * something composable this way, so callers can either use it alone
- * (`background-image:{{placeholder}}`) or layer it behind a real photo that's
- * also a CSS background (`background-image:url(realPhoto), {{placeholder}}`)
- * without caring which mode is active.
+ * Computes a low-quality image placeholder from a real image.
+ *
+ * Two entry points, and which one you want depends on the mode:
+ *
+ * - forFile()/forBytes() return a single value usable inside a CSS
+ *   `background-image` list (e.g. `url('data:...')` or
+ *   `radial-gradient(...),radial-gradient(...)`). `dominant_color`, `gradient`
+ *   and `blur` all return something composable this way - including
+ *   dominant_color, via a same-color-both-stops `linear-gradient()` - so
+ *   callers can use it alone (`background-image:{{placeholder}}`) or layer it
+ *   behind a real photo that's also a CSS background
+ *   (`background-image:url(realPhoto), {{placeholder}}`) without caring which
+ *   of those three is active.
+ *
+ * - resultForFile()/resultForBytes() return an LqipResult, which also says what
+ *   kind of value it is. Needed for `css_only`, whose output is a bare integer
+ *   for a CSS custom property rather than a background-image value. Asking the
+ *   CSS-returning methods for such a mode throws NotCssRepresentable.
  *
  * Framework-agnostic: no caching, no settings model, no media-library
  * abstraction. Callers own persistence and configuration; pass options
@@ -70,8 +80,28 @@ class PlaceholderGenerator
     /**
      * @param string $path Local filesystem path to a readable image file.
      * @param array $options See self::DEFAULT_OPTIONS.
+     * @throws Exceptions\NotCssRepresentable If the mode doesn't produce a CSS value.
      */
     public static function forFile(string $path, array $options = []): ?string
+    {
+        return static::toCss(static::resultForFile($path, $options), $options);
+    }
+
+    /**
+     * @param string $bytes Raw image bytes.
+     * @param array $options See self::DEFAULT_OPTIONS.
+     * @throws Exceptions\NotCssRepresentable If the mode doesn't produce a CSS value.
+     */
+    public static function forBytes(string $bytes, array $options = []): ?string
+    {
+        return static::toCss(static::resultForBytes($bytes, $options), $options);
+    }
+
+    /**
+     * @param string $path Local filesystem path to a readable image file.
+     * @param array $options See self::DEFAULT_OPTIONS.
+     */
+    public static function resultForFile(string $path, array $options = []): ?LqipResult
     {
         if (!$path || !is_readable($path)) {
             return null;
@@ -82,14 +112,14 @@ class PlaceholderGenerator
             return null;
         }
 
-        return static::forBytes($bytes, $options);
+        return static::resultForBytes($bytes, $options);
     }
 
     /**
      * @param string $bytes Raw image bytes.
      * @param array $options See self::DEFAULT_OPTIONS.
      */
-    public static function forBytes(string $bytes, array $options = []): ?string
+    public static function resultForBytes(string $bytes, array $options = []): ?LqipResult
     {
         if (!$bytes) {
             return null;
@@ -99,6 +129,7 @@ class PlaceholderGenerator
 
         $previousLimit = ini_get('memory_limit');
         ini_set('memory_limit', static::TEMP_MEMORY_LIMIT);
+        $source = null;
 
         try {
             $size = @getimagesizefromstring($bytes);
@@ -114,19 +145,50 @@ class PlaceholderGenerator
             [$origWidth, $origHeight] = $size;
 
             $strategy = static::resolveStrategy($options['mode']);
-            $style = $strategy->generate($source, $origWidth, $origHeight, $options);
 
-            imagedestroy($source);
-
-            return $style;
+            return $strategy->generate($source, $origWidth, $origHeight, $options);
         } catch (Throwable $e) {
             return null;
         } finally {
+            // In finally rather than after the generate() call: a strategy that throws
+            // would otherwise leak the decoded bitmap, which is the largest allocation
+            // this class makes.
+            if ($source) {
+                imagedestroy($source);
+            }
+
             // Suppressed: lowering back below the peak usage this call just reached
             // triggers a warning, not a failure - harmless, the limit simply stays raised
             // for the rest of this request.
             @ini_set('memory_limit', $previousLimit);
         }
+    }
+
+    /**
+     * Deliberately outside resultFor*()'s try/catch. That catch exists to make a
+     * broken *image* fail softly as null; asking for CSS from a mode that cannot
+     * produce it is a caller mistake, and swallowing it into an
+     * indistinguishable null would be undiagnosable. Keeping the conversion out
+     * here means no future exception on this path can be swallowed either,
+     * without anyone having to remember to special-case it.
+     *
+     * @throws Exceptions\NotCssRepresentable
+     */
+    protected static function toCss(?LqipResult $result, array $options): ?string
+    {
+        if ($result === null) {
+            return null;
+        }
+
+        $css = $result->toCss();
+        if ($css === null) {
+            throw Exceptions\NotCssRepresentable::forResult(
+                (string) ($options['mode'] ?? static::DEFAULT_OPTIONS['mode']),
+                $result->kind()
+            );
+        }
+
+        return $css;
     }
 
     protected static function resolveStrategy(string $mode): LqipStrategy

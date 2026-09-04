@@ -1,5 +1,7 @@
 <?php namespace Bonniss26\Lqip\Tests;
 
+use Bonniss26\Lqip\Exceptions\NotCssRepresentable;
+use Bonniss26\Lqip\LqipResult;
 use Bonniss26\Lqip\PlaceholderGenerator;
 use Bonniss26\Lqip\Strategies\LqipStrategy;
 use PHPUnit\Framework\TestCase;
@@ -190,12 +192,91 @@ class PlaceholderGeneratorTest extends TestCase
         $this->assertNull(PlaceholderGenerator::forBytes('not an image'));
     }
 
+    public function testResultForBytesTagsBuiltInModesAsCssAndAgreesWithForBytes(): void
+    {
+        $bytes = $this->makeSolidImagePng(0xE0, 0x40, 0x20);
+
+        foreach (['dominant_color', 'gradient', 'blur'] as $mode) {
+            $result = PlaceholderGenerator::resultForBytes($bytes, ['mode' => $mode]);
+
+            $this->assertNotNull($result, $mode);
+            $this->assertSame(LqipResult::KIND_CSS, $result->kind(), $mode);
+            $this->assertSame(
+                PlaceholderGenerator::forBytes($bytes, ['mode' => $mode]),
+                $result->toCss(),
+                "the two entry points must agree for mode {$mode}"
+            );
+        }
+    }
+
+    public function testResultForFileReadsFromDisk(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'lqip') . '.png';
+        file_put_contents($path, $this->makeSolidImagePng(0x00, 0xAA, 0xFF));
+
+        try {
+            $result = PlaceholderGenerator::resultForFile($path, ['mode' => 'dominant_color']);
+
+            $this->assertNotNull($result);
+            $this->assertSame(LqipResult::KIND_CSS, $result->kind());
+        } finally {
+            unlink($path);
+        }
+    }
+
+    public function testResultForFileReturnsNullForMissingFile(): void
+    {
+        $this->assertNull(PlaceholderGenerator::resultForFile('/does/not/exist.png'));
+    }
+
+    public function testResultForBytesReturnsNullForGarbageInput(): void
+    {
+        $this->assertNull(PlaceholderGenerator::resultForBytes('not an image'));
+    }
+
+    public function testForBytesThrowsWhenAStrategyProducesANonCssValue(): void
+    {
+        $strategy = new class implements LqipStrategy {
+            public function generate($source, int $origWidth, int $origHeight, array $options): ?LqipResult
+            {
+                return LqipResult::cssVar('42', '--x');
+            }
+        };
+        // Unique mode name: $customStrategies is static with no unregister, so a
+        // shared name would leak into whatever test runs next.
+        PlaceholderGenerator::extend(__FUNCTION__, $strategy);
+
+        $this->expectException(NotCssRepresentable::class);
+        $this->expectExceptionMessageMatches('/resultFor/');
+
+        PlaceholderGenerator::forBytes($this->makeSolidImagePng(0x11, 0x22, 0x33), ['mode' => __FUNCTION__]);
+    }
+
+    /**
+     * The two failure modes have a precedence, and it matters: a broken image is
+     * a soft null even in a non-CSS mode, because the kind is never established.
+     * Only a successfully generated non-CSS value throws. Regression guard for
+     * moving the conversion back inside resultForBytes()'s catch (Throwable).
+     */
+    public function testUndecodableInputIsStillNullEvenInANonCssMode(): void
+    {
+        $strategy = new class implements LqipStrategy {
+            public function generate($source, int $origWidth, int $origHeight, array $options): ?LqipResult
+            {
+                return LqipResult::cssVar('42', '--x');
+            }
+        };
+        PlaceholderGenerator::extend(__FUNCTION__, $strategy);
+
+        $this->assertNull(PlaceholderGenerator::forBytes('not an image', ['mode' => __FUNCTION__]));
+    }
+
     public function testExtendRegistersACustomStrategyForANewMode(): void
     {
         $strategy = new class implements LqipStrategy {
-            public function generate($source, int $origWidth, int $origHeight, array $options): ?string
+            public function generate($source, int $origWidth, int $origHeight, array $options): ?LqipResult
             {
-                return 'custom-placeholder-value';
+                return LqipResult::css('custom-placeholder-value');
             }
         };
 
@@ -212,9 +293,9 @@ class PlaceholderGeneratorTest extends TestCase
     public function testExtendCanOverrideABuiltInModeName(): void
     {
         $strategy = new class implements LqipStrategy {
-            public function generate($source, int $origWidth, int $origHeight, array $options): ?string
+            public function generate($source, int $origWidth, int $origHeight, array $options): ?LqipResult
             {
-                return 'overridden-gradient';
+                return LqipResult::css('overridden-gradient');
             }
         };
 

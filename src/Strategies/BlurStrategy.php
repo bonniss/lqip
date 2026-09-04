@@ -1,12 +1,14 @@
 <?php namespace Bonniss26\Lqip\Strategies;
 
+use Bonniss26\Lqip\LqipResult;
+
 /**
  * Blurred miniature, encoded as a data URI - the most realistic option, and
  * also the most expensive one.
  */
 class BlurStrategy implements LqipStrategy
 {
-    public function generate($source, int $origWidth, int $origHeight, array $options): ?string
+    public function generate($source, int $origWidth, int $origHeight, array $options): ?LqipResult
     {
         $targetLongEdge = (int) $options['long_edge'];
         $quality = (int) $options['quality'];
@@ -46,6 +48,6 @@ class BlurStrategy implements LqipStrategy
 
         $dataUri = "data:{$mime};base64," . base64_encode($binary);
 
-        return "url('{$dataUri}')";
+        return LqipResult::css("url('{$dataUri}')");
     }
 }
