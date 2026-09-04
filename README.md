@@ -169,10 +169,19 @@ value actually sent over the wire.
 - Shipping the `css_only` decode stylesheet - the mode generates the value,
   the consuming site supplies the CSS.
 
-## Origin
+## Framework integration
 
-Extracted from a WinterCMS site plugin (`bonniss26/mediaplaceholder`) where
-the same algorithm ran cached-by-path behind a Twig filter. This package is
-the framework-agnostic core; a WinterCMS adapter (Twig filter, Settings
-model, caching, console commands) is planned as a separate package
-(`bonniss26/wn-lqip-plugin`) that depends on this one.
+This package is the core: give it an image, get a string back. Caching,
+configuration and template helpers belong in an adapter for whatever framework
+you use.
+
+A WinterCMS adapter — Twig filters, a settings page, database caching and
+console commands — is planned as `bonniss26/wn-imagery-plugin`, which depends
+on this package.
+
+## Credits
+
+The `css_only` mode implements the placeholder format designed by Lean Rada,
+described at [leanrada.com/notes/css-only-lqip](https://leanrada.com/notes/css-only-lqip/).
+The colour space maths is Björn Ottosson's
+[Oklab](https://bottosson.github.io/posts/oklab/).
