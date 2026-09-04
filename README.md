@@ -62,7 +62,7 @@ $placeholder = PlaceholderGenerator::forFile('/path/to/photo.jpg', ['mode' => 't
 |-------------|------------------|------------|--------------------------------------------|
 | `mode`      | `dominant_color` | all        | `dominant_color` \| `gradient` \| `blur`   |
 | `long_edge` | `16`             | `blur`     | Longest edge, in px, of the resized source |
-| `quality`   | `50`             | `blur`     | Lossy encode quality (0-100)               |
+| `quality`   | `25`             | `blur`     | Lossy encode quality (0-100)               |
 | `blur`      | `true`           | `blur`     | Apply a Gaussian blur before encoding      |
 | `format`    | `webp`           | `blur`     | `webp` \| `jpg` (falls back to jpg if GD lacks WebP support) |
 

@@ -88,6 +88,24 @@ class PlaceholderGeneratorTest extends TestCase
         );
     }
 
+    public function testDefaultQualityIsTunedForTinyPlaceholders(): void
+    {
+        $this->assertSame(25, PlaceholderGenerator::DEFAULT_OPTIONS['quality']);
+    }
+
+    public function testHigherQualityProducesALongerDataUri(): void
+    {
+        // Needs an image with real detail: on a solid or near-solid source there is
+        // nothing for the encoder to spend the extra bits on and the two sizes
+        // converge, which would make this flaky. Blur is off for the same reason.
+        $bytes = $this->makeQuadrantImagePng(32);
+
+        $low = PlaceholderGenerator::forBytes($bytes, ['mode' => 'blur', 'blur' => false, 'quality' => 25]);
+        $high = PlaceholderGenerator::forBytes($bytes, ['mode' => 'blur', 'blur' => false, 'quality' => 90]);
+
+        $this->assertLessThan(strlen($high), strlen($low));
+    }
+
     public function testForFileReadsFromDisk(): void
     {
         $path = tempnam(sys_get_temp_dir(), 'lqip') . '.png';
