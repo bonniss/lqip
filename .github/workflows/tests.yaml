@@ -1,0 +1,45 @@
+name: tests
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # composer.json declares ^8.0; the suite has only ever been run on 8.2
+        # locally, so the lower and upper bounds are the point of this matrix.
+        php: ['8.0', '8.1', '8.2', '8.3']
+
+    name: PHP ${{ matrix.php }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          # gd is required, not optional. The runner's build includes WebP, which
+          # matters: without it the blur mode silently falls back to JPEG and the
+          # size assertions would be exercising a different code path than the one
+          # the defaults describe.
+          extensions: gd
+          coverage: none
+
+      - name: Report GD capabilities
+        run: php -r 'var_dump(gd_info());'
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      - name: Install dependencies
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Run tests
+        run: vendor/bin/phpunit
