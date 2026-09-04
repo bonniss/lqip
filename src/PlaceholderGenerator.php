@@ -1,5 +1,9 @@
 <?php namespace Bonniss26\Lqip;
 
+use Bonniss26\Lqip\Strategies\BlurStrategy;
+use Bonniss26\Lqip\Strategies\DominantColorStrategy;
+use Bonniss26\Lqip\Strategies\GradientStrategy;
+use Bonniss26\Lqip\Strategies\LqipStrategy;
 use Throwable;
 
 /**
@@ -15,6 +19,9 @@ use Throwable;
  * Framework-agnostic: no caching, no settings model, no media-library
  * abstraction. Callers own persistence and configuration; pass options
  * explicitly per call.
+ *
+ * Decoding, size-capping, and dispatch to a mode's LqipStrategy live here;
+ * the actual pixel-crunching per mode lives in Strategies\*.
  */
 class PlaceholderGenerator
 {
@@ -32,12 +39,28 @@ class PlaceholderGenerator
     const MAX_SOURCE_PIXELS = 60_000_000;
 
     const DEFAULT_OPTIONS = [
-        'mode' => 'dominant_color', // dominant_color | gradient | blur
+        'mode' => 'dominant_color', // dominant_color | gradient | blur | custom (see ::extend())
         'long_edge' => 16,
         'quality' => 50,
         'blur' => true,
         'format' => 'webp', // webp | jpg
     ];
+
+    /**
+     * Strategies registered via ::extend(), keyed by mode name. Checked before
+     * the built-in ones, so a custom registration can also override a
+     * built-in mode name.
+     */
+    protected static array $customStrategies = [];
+
+    /**
+     * Register (or override) a strategy for a mode name, e.g. a future
+     * `thumbhash` or `css_only` implementation living outside this package.
+     */
+    public static function extend(string $mode, LqipStrategy $strategy): void
+    {
+        static::$customStrategies[$mode] = $strategy;
+    }
 
     /**
      * @param string $path Local filesystem path to a readable image file.
@@ -85,11 +108,8 @@ class PlaceholderGenerator
 
             [$origWidth, $origHeight] = $size;
 
-            $style = match ($options['mode']) {
-                'dominant_color' => static::dominantColorStyle($source, $origWidth, $origHeight),
-                'gradient' => static::gradientStyle($source, $origWidth, $origHeight),
-                default => static::blurStyle($source, $origWidth, $origHeight, $options),
-            };
+            $strategy = static::resolveStrategy($options['mode']);
+            $style = $strategy->generate($source, $origWidth, $origHeight, $options);
 
             imagedestroy($source);
 
@@ -104,116 +124,24 @@ class PlaceholderGenerator
         }
     }
 
-    /**
-     * Blurred miniature, encoded as a data URI - the most realistic option, and also
-     * the most expensive one.
-     */
-    protected static function blurStyle($source, int $origWidth, int $origHeight, array $options): ?string
+    protected static function resolveStrategy(string $mode): LqipStrategy
     {
-        $targetLongEdge = (int) $options['long_edge'];
-        $quality = (int) $options['quality'];
-        $blurEnabled = (bool) $options['blur'];
-        $format = $options['format'];
-
-        $longEdge = max($origWidth, $origHeight);
-        $scale = $targetLongEdge / $longEdge;
-        $targetWidth = max(1, (int) round($origWidth * $scale));
-        $targetHeight = max(1, (int) round($origHeight * $scale));
-
-        $resized = imagecreatetruecolor($targetWidth, $targetHeight);
-        imagecopyresampled($resized, $source, 0, 0, 0, 0, $targetWidth, $targetHeight, $origWidth, $origHeight);
-
-        if ($blurEnabled) {
-            // Baked into the pixels rather than left to a CSS `filter: blur()` on the
-            // <img> - that would apply to the whole element, including the real photo
-            // once it's loaded on top of this background, permanently blurring it too.
-            imagefilter($resized, IMG_FILTER_GAUSSIAN_BLUR);
-            imagefilter($resized, IMG_FILTER_GAUSSIAN_BLUR);
-        }
-
-        ob_start();
-        if ($format === 'webp' && function_exists('imagewebp')) {
-            imagewebp($resized, null, $quality);
-            $mime = 'image/webp';
-        } else {
-            imagejpeg($resized, null, $quality);
-            $mime = 'image/jpeg';
-        }
-        $binary = ob_get_clean();
-        imagedestroy($resized);
-
-        if (!$binary) {
-            return null;
-        }
-
-        $dataUri = "data:{$mime};base64," . base64_encode($binary);
-
-        return "url('{$dataUri}')";
+        return static::$customStrategies[$mode]
+            ?? static::builtInStrategies()[$mode]
+            // Unknown mode names fall back to `blur` - the most broadly
+            // acceptable default when misconfigured, same as before this
+            // was a match() with a `default` arm.
+            ?? static::builtInStrategies()['blur'];
     }
 
-    /**
-     * A handful of CSS radial-gradients built from a 2x2 sample grid - no image data
-     * at all, just literal colors, roughly approximating the photo's layout.
-     */
-    protected static function gradientStyle($source, int $origWidth, int $origHeight): ?string
+    protected static function builtInStrategies(): array
     {
-        $grid = imagecreatetruecolor(2, 2);
-        imagecopyresampled($grid, $source, 0, 0, 0, 0, 2, 2, $origWidth, $origHeight);
+        static $strategies = null;
 
-        [$topLeft, $topRight, $bottomLeft, $bottomRight] = [
-            static::hexAt($grid, 0, 0),
-            static::hexAt($grid, 1, 0),
-            static::hexAt($grid, 0, 1),
-            static::hexAt($grid, 1, 1),
+        return $strategies ??= [
+            'dominant_color' => new DominantColorStrategy(),
+            'gradient' => new GradientStrategy(),
+            'blur' => new BlurStrategy(),
         ];
-        imagedestroy($grid);
-
-        // The solid linear-gradient as the last (bottom) layer stands in for a plain
-        // background-color fallback - a background-color declaration can't be mixed
-        // into a background-image comma list, but a same-color-both-stops gradient
-        // renders identically and *can*.
-        return "radial-gradient(at 25% 25%,{$topLeft} 0px,transparent 60%),"
-            . "radial-gradient(at 75% 25%,{$topRight} 0px,transparent 60%),"
-            . "radial-gradient(at 25% 75%,{$bottomLeft} 0px,transparent 60%),"
-            . "radial-gradient(at 75% 75%,{$bottomRight} 0px,transparent 60%),"
-            . "linear-gradient({$topLeft},{$topLeft})";
-    }
-
-    /**
-     * A single flat tone - cheapest by far, no sense of shape. Quantizes down to a
-     * handful of colors and picks the most-used one rather than averaging every pixel,
-     * which tends to muddy distinct colors into grey/brown.
-     */
-    protected static function dominantColorStyle($source, int $origWidth, int $origHeight): ?string
-    {
-        $tiny = imagecreatetruecolor(8, 8);
-        imagecopyresampled($tiny, $source, 0, 0, 0, 0, 8, 8, $origWidth, $origHeight);
-        imagetruecolortopalette($tiny, false, 5);
-
-        $counts = [];
-        for ($x = 0; $x < 8; $x++) {
-            for ($y = 0; $y < 8; $y++) {
-                $index = imagecolorat($tiny, $x, $y);
-                $counts[$index] = ($counts[$index] ?? 0) + 1;
-            }
-        }
-        arsort($counts);
-        $topIndex = array_key_first($counts);
-        $rgb = imagecolorsforindex($tiny, $topIndex);
-        imagedestroy($tiny);
-
-        $hex = sprintf('#%02x%02x%02x', $rgb['red'], $rgb['green'], $rgb['blue']);
-
-        // Same-color-both-stops linear-gradient renders identically to a flat
-        // background-color, but (unlike background-color) can be layered into a
-        // background-image comma list.
-        return "linear-gradient({$hex},{$hex})";
-    }
-
-    protected static function hexAt($image, int $x, int $y): string
-    {
-        $rgb = imagecolorsforindex($image, imagecolorat($image, $x, $y));
-
-        return sprintf('#%02x%02x%02x', $rgb['red'], $rgb['green'], $rgb['blue']);
     }
 }

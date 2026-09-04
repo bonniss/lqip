@@ -42,6 +42,20 @@ or layer it behind the real photo once that's also a CSS background:
 background-image: url(realPhoto.jpg), linear-gradient(#7c6a54,#7c6a54);
 ```
 
+### Extending with a custom strategy
+
+Each mode is a class implementing `Bonniss26\Lqip\Strategies\LqipStrategy`.
+Register your own (or override a built-in one) with `extend()`:
+
+```php
+use Bonniss26\Lqip\PlaceholderGenerator;
+use Bonniss26\Lqip\Strategies\LqipStrategy;
+
+PlaceholderGenerator::extend('thumbhash', new MyThumbHashStrategy());
+
+$placeholder = PlaceholderGenerator::forFile('/path/to/photo.jpg', ['mode' => 'thumbhash']);
+```
+
 ### Options
 
 | Option      | Default          | Applies to | Meaning                                   |

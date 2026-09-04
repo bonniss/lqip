@@ -1,6 +1,7 @@
 <?php namespace Bonniss26\Lqip\Tests;
 
 use Bonniss26\Lqip\PlaceholderGenerator;
+use Bonniss26\Lqip\Strategies\LqipStrategy;
 use PHPUnit\Framework\TestCase;
 
 class PlaceholderGeneratorTest extends TestCase
@@ -119,6 +120,49 @@ class PlaceholderGeneratorTest extends TestCase
     public function testForBytesReturnsNullForGarbageInput(): void
     {
         $this->assertNull(PlaceholderGenerator::forBytes('not an image'));
+    }
+
+    public function testExtendRegistersACustomStrategyForANewMode(): void
+    {
+        $strategy = new class implements LqipStrategy {
+            public function generate($source, int $origWidth, int $origHeight, array $options): ?string
+            {
+                return 'custom-placeholder-value';
+            }
+        };
+
+        PlaceholderGenerator::extend('my_custom_mode', $strategy);
+
+        $result = PlaceholderGenerator::forBytes(
+            $this->makeSolidImagePng(0x11, 0x22, 0x33),
+            ['mode' => 'my_custom_mode']
+        );
+
+        $this->assertSame('custom-placeholder-value', $result);
+    }
+
+    public function testExtendCanOverrideABuiltInModeName(): void
+    {
+        $strategy = new class implements LqipStrategy {
+            public function generate($source, int $origWidth, int $origHeight, array $options): ?string
+            {
+                return 'overridden-gradient';
+            }
+        };
+
+        PlaceholderGenerator::extend('gradient', $strategy);
+
+        try {
+            $result = PlaceholderGenerator::forBytes(
+                $this->makeQuadrantImagePng(),
+                ['mode' => 'gradient']
+            );
+
+            $this->assertSame('overridden-gradient', $result);
+        } finally {
+            // Restore the built-in so this override doesn't leak into other tests.
+            PlaceholderGenerator::extend('gradient', new \Bonniss26\Lqip\Strategies\GradientStrategy());
+        }
     }
 
     private function makeSolidImagePng(int $r, int $g, int $b, int $w = 8, int $h = 8): string
