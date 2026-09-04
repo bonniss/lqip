@@ -49,6 +49,20 @@ class PlaceholderGenerator
     // Not exposed as an option - it's a safety backstop, not a quality/cost knob.
     const MAX_SOURCE_PIXELS = 60_000_000;
 
+    // Ranges the numeric options are forced into. Backstops, not quality knobs.
+    //
+    // quality: imagewebp() raises an uncatchable E_ERROR ("gd-webp encoding failed")
+    // on a negative value, so this bound is what keeps a bad option from killing the
+    // process outright rather than returning null like every other failure here.
+    //
+    // long_edge: a placeholder is meant to be tiny. At 64 the worst case measured
+    // was ~5KB of base64; at 5000 it is ~70KB per image, which is no longer a
+    // placeholder and overflows a MySQL TEXT column if the caller caches it.
+    const MIN_QUALITY = 0;
+    const MAX_QUALITY = 100;
+    const MIN_LONG_EDGE = 1;
+    const MAX_LONG_EDGE = 64;
+
     const DEFAULT_OPTIONS = [
         'mode' => 'dominant_color', // dominant_color | gradient | blur | css_only | custom (see ::extend())
         'long_edge' => 16,
@@ -104,7 +118,13 @@ class PlaceholderGenerator
      */
     public static function resultForFile(string $path, array $options = []): ?LqipResult
     {
-        if (!$path || !is_readable($path)) {
+        // is_file() as well as is_readable(): a directory is "readable", so without
+        // this the call falls through to file_get_contents(), which emits a PHP
+        // warning. That warning is raised before the try block below can catch
+        // anything - and a framework that promotes warnings to exceptions (Laravel
+        // and anything built on it does) then turns it into a fatal request error,
+        // breaking this class's promise that every failure is just null.
+        if (!$path || !is_file($path) || !is_readable($path)) {
             return null;
         }
 
@@ -126,7 +146,7 @@ class PlaceholderGenerator
             return null;
         }
 
-        $options = $options + static::DEFAULT_OPTIONS;
+        $options = static::normalizeOptions($options + static::DEFAULT_OPTIONS);
 
         $previousLimit = ini_get('memory_limit');
         ini_set('memory_limit', static::TEMP_MEMORY_LIMIT);
@@ -190,6 +210,23 @@ class PlaceholderGenerator
         }
 
         return $css;
+    }
+
+    /**
+     * Forces the numeric options into ranges GD will actually accept.
+     *
+     * Not defensive tidying - imagewebp() with a negative quality raises E_ERROR,
+     * which no try/catch can intercept, so a single out-of-range value takes the
+     * whole process down and defeats every other safeguard in this class. A caller
+     * driving these from a settings form or a config file cannot be assumed to
+     * have validated them.
+     */
+    protected static function normalizeOptions(array $options): array
+    {
+        $options['quality'] = max(self::MIN_QUALITY, min(self::MAX_QUALITY, (int) $options['quality']));
+        $options['long_edge'] = max(self::MIN_LONG_EDGE, min(self::MAX_LONG_EDGE, (int) $options['long_edge']));
+
+        return $options;
     }
 
     protected static function resolveStrategy(string $mode): LqipStrategy

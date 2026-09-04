@@ -194,6 +194,74 @@ class PlaceholderGeneratorTest extends TestCase
         $this->assertNull(PlaceholderGenerator::forBytes('not an image'));
     }
 
+    /**
+     * A directory passes is_readable(), so without an is_file() check this reaches
+     * file_get_contents() and emits a PHP warning. Frameworks that promote warnings
+     * to exceptions - Laravel and everything built on it - would then turn a merely
+     * unusable path into a fatal request error, which is exactly what this class
+     * promises never to do.
+     */
+    public function testForFileReturnsNullForADirectoryWithoutEmittingAWarning(): void
+    {
+        $raised = null;
+        set_error_handler(function ($level, $message) use (&$raised) {
+            $raised = $message;
+
+            return true;
+        });
+
+        try {
+            $result = PlaceholderGenerator::forFile(sys_get_temp_dir());
+        } finally {
+            restore_error_handler();
+        }
+
+        $this->assertNull($result);
+        $this->assertNull($raised, "expected no PHP diagnostic, got: {$raised}");
+    }
+
+    /**
+     * imagewebp() raises an uncatchable E_ERROR on a negative quality, so an
+     * unvalidated settings value would take the whole process down rather than
+     * returning null. Clamping is what keeps every failure recoverable.
+     */
+    public function testOutOfRangeQualityIsClampedRatherThanReachingGd(): void
+    {
+        $bytes = $this->makeQuadrantImagePng(32);
+
+        foreach ([-5, -1, 101, 9999] as $quality) {
+            $this->assertNotNull(
+                PlaceholderGenerator::forBytes($bytes, ['mode' => 'blur', 'quality' => $quality]),
+                "quality {$quality} should have been clamped into range"
+            );
+        }
+    }
+
+    public function testLongEdgeIsCappedSoAPlaceholderStaysSmall(): void
+    {
+        $bytes = $this->makeQuadrantImagePng(32);
+
+        $capped = PlaceholderGenerator::forBytes($bytes, ['mode' => 'blur', 'long_edge' => 5000]);
+        $atCap = PlaceholderGenerator::forBytes($bytes, ['mode' => 'blur', 'long_edge' => PlaceholderGenerator::MAX_LONG_EDGE]);
+
+        $this->assertSame($atCap, $capped, 'an oversized long_edge must behave exactly like the cap');
+
+        // Well under a MySQL TEXT column, which a caching caller is likely to use.
+        $this->assertLessThan(16384, strlen($capped));
+    }
+
+    public function testNonPositiveLongEdgeStillProducesOutput(): void
+    {
+        $bytes = $this->makeSolidImagePng(0x10, 0x20, 0x30);
+
+        foreach ([0, -3] as $longEdge) {
+            $this->assertNotNull(
+                PlaceholderGenerator::forBytes($bytes, ['mode' => 'blur', 'long_edge' => $longEdge]),
+                "long_edge {$longEdge} should have been clamped up to the minimum"
+            );
+        }
+    }
+
     public function testCssOnlyReturnsAnIntegerForACustomProperty(): void
     {
         $result = PlaceholderGenerator::resultForBytes(
