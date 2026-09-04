@@ -10,8 +10,7 @@ Guidance for AI coding agents working in this repository.
 while the real photo is still loading.
 
 Extracted from `plugins/bonniss26/mediaplaceholder`, a plugin in the WinterCMS
-project `ateliersgam` (`C:\laragon\www\ateliersgam`, a separate git repo on
-this machine), where the same algorithm ran cached-by-path behind a Twig
+project `ateliersgam`, where the same algorithm ran cached-by-path behind a Twig
 filter. This package is the framework-agnostic **core only** — no caching, no
 settings/config system, no framework glue. A separate adapter package
 (`bonniss26/wn-lqip-plugin`, not yet created) is planned to wrap this for
