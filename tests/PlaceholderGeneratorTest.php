@@ -3,7 +3,9 @@
 use Bonniss26\Lqip\Exceptions\NotCssRepresentable;
 use Bonniss26\Lqip\LqipResult;
 use Bonniss26\Lqip\PlaceholderGenerator;
+use Bonniss26\Lqip\Strategies\CssOnlyStrategy;
 use Bonniss26\Lqip\Strategies\LqipStrategy;
+use Bonniss26\Lqip\Support\LqipInteger;
 use PHPUnit\Framework\TestCase;
 
 class PlaceholderGeneratorTest extends TestCase
@@ -190,6 +192,124 @@ class PlaceholderGeneratorTest extends TestCase
     public function testForBytesReturnsNullForGarbageInput(): void
     {
         $this->assertNull(PlaceholderGenerator::forBytes('not an image'));
+    }
+
+    public function testCssOnlyReturnsAnIntegerForACustomProperty(): void
+    {
+        $result = PlaceholderGenerator::resultForBytes(
+            $this->makeQuadrantImagePng(32),
+            ['mode' => 'css_only']
+        );
+
+        $this->assertNotNull($result);
+        $this->assertSame(LqipResult::KIND_CSS_VAR, $result->kind());
+        $this->assertMatchesRegularExpression('/^-?\d+$/', $result->value());
+        $this->assertSame('--lqip', $result->cssProperty());
+        $this->assertNull($result->toCss());
+
+        $value = (int) $result->value();
+        $this->assertGreaterThanOrEqual(LqipInteger::MIN, $value);
+        $this->assertLessThanOrEqual(LqipInteger::MAX, $value);
+    }
+
+    public function testCssOnlyEncodesAUniformImageAsSixIdenticalCells(): void
+    {
+        $result = PlaceholderGenerator::resultForBytes(
+            $this->makeSolidImagePng(0x7C, 0x6A, 0x54, 24, 16),
+            ['mode' => 'css_only']
+        );
+
+        $cells = LqipInteger::unpack((int) $result->value())['cells'];
+
+        // Every cell has the same luminance as every other, so whichever bucket
+        // they land in they must all land in the same one. Asserting a specific
+        // bucket would be asserting the base colour's quantization error instead.
+        $this->assertCount(1, array_unique($cells), 'cells: ' . implode(',', $cells));
+    }
+
+    /**
+     * The only test that proves the six cells are stored in row-major order
+     * (top-left, top-middle, top-right, then the bottom row). A transposed or
+     * reversed layout still round-trips through pack/unpack, so nothing in the
+     * codec tests would notice.
+     */
+    public function testCssOnlyCellsFollowVerticalBrightness(): void
+    {
+        $image = imagecreatetruecolor(24, 16);
+        imagefilledrectangle($image, 0, 0, 23, 7, imagecolorallocate($image, 0x00, 0x00, 0x00));
+        imagefilledrectangle($image, 0, 8, 23, 15, imagecolorallocate($image, 0xFF, 0xFF, 0xFF));
+
+        $result = PlaceholderGenerator::resultForBytes(
+            $this->encodePng($image),
+            ['mode' => 'css_only']
+        );
+        $cells = LqipInteger::unpack((int) $result->value())['cells'];
+
+        $this->assertLessThan(
+            min(array_slice($cells, 3, 3)),
+            max(array_slice($cells, 0, 3)),
+            'the dark top row must encode below the bright bottom row; cells: ' . implode(',', $cells)
+        );
+    }
+
+    /**
+     * The reference implementation emits no placeholder at all for images with
+     * transparency. This package deliberately does not follow that: every other
+     * mode already composites alpha onto black, and returning null here - in a
+     * class where null also means "broken image" - would be undiagnosable.
+     */
+    public function testCssOnlyStillProducesAValueForAnImageWithAlpha(): void
+    {
+        $image = imagecreatetruecolor(24, 16);
+        imagesavealpha($image, true);
+        imagefill($image, 0, 0, imagecolorallocatealpha($image, 0x20, 0x80, 0xC0, 64));
+
+        $result = PlaceholderGenerator::resultForBytes(
+            $this->encodePng($image),
+            ['mode' => 'css_only']
+        );
+
+        $this->assertNotNull($result);
+        $this->assertSame(LqipResult::KIND_CSS_VAR, $result->kind());
+    }
+
+    public function testCssOnlyDoesNotModifyTheDecodedSource(): void
+    {
+        $image = imagecreatetruecolor(24, 16);
+        imagefilledrectangle($image, 0, 0, 23, 15, imagecolorallocate($image, 0x33, 0x66, 0x99));
+        imagefilledrectangle($image, 0, 0, 11, 7, imagecolorallocate($image, 0xCC, 0x33, 0x11));
+        $before = [imagecolorat($image, 0, 0), imagecolorat($image, 23, 15)];
+
+        (new CssOnlyStrategy())->generate($image, 24, 16, PlaceholderGenerator::DEFAULT_OPTIONS);
+
+        $this->assertSame(
+            $before,
+            [imagecolorat($image, 0, 0), imagecolorat($image, 23, 15)],
+            'the strategy must not mutate the source image the generator still owns'
+        );
+        imagedestroy($image);
+    }
+
+    public function testForBytesThrowsForTheCssOnlyMode(): void
+    {
+        $this->expectException(NotCssRepresentable::class);
+        $this->expectExceptionMessageMatches('/resultFor/');
+
+        PlaceholderGenerator::forBytes($this->makeSolidImagePng(0x11, 0x22, 0x33), ['mode' => 'css_only']);
+    }
+
+    public function testForFileThrowsForTheCssOnlyMode(): void
+    {
+        $path = tempnam(sys_get_temp_dir(), 'lqip') . '.png';
+        file_put_contents($path, $this->makeSolidImagePng(0x11, 0x22, 0x33));
+
+        try {
+            $this->expectException(NotCssRepresentable::class);
+
+            PlaceholderGenerator::forFile($path, ['mode' => 'css_only']);
+        } finally {
+            unlink($path);
+        }
     }
 
     public function testResultForBytesTagsBuiltInModesAsCssAndAgreesWithForBytes(): void

@@ -1,6 +1,7 @@
 <?php namespace Bonniss26\Lqip;
 
 use Bonniss26\Lqip\Strategies\BlurStrategy;
+use Bonniss26\Lqip\Strategies\CssOnlyStrategy;
 use Bonniss26\Lqip\Strategies\DominantColorStrategy;
 use Bonniss26\Lqip\Strategies\GradientStrategy;
 use Bonniss26\Lqip\Strategies\LqipStrategy;
@@ -49,7 +50,7 @@ class PlaceholderGenerator
     const MAX_SOURCE_PIXELS = 60_000_000;
 
     const DEFAULT_OPTIONS = [
-        'mode' => 'dominant_color', // dominant_color | gradient | blur | custom (see ::extend())
+        'mode' => 'dominant_color', // dominant_color | gradient | blur | css_only | custom (see ::extend())
         'long_edge' => 16,
         // Deliberately low. At a 16px long edge with the default two blur passes,
         // most of what a higher quality preserves is high-frequency detail the blur
@@ -209,6 +210,7 @@ class PlaceholderGenerator
             'dominant_color' => new DominantColorStrategy(),
             'gradient' => new GradientStrategy(),
             'blur' => new BlurStrategy(),
+            'css_only' => new CssOnlyStrategy(),
         ];
     }
 }
