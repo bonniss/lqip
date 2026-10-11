@@ -14,7 +14,7 @@ class LqipResultTest extends TestCase
         $this->assertSame('linear-gradient(#abc,#abc)', $result->toCss());
         $this->assertTrue($result->isCssRepresentable());
         $this->assertNull($result->cssProperty());
-        $this->assertSame('background-image:linear-gradient(#abc,#abc)', $result->toStyleAttribute());
+        $this->assertSame('background-image:linear-gradient(#abc,#abc);background-size:cover', $result->toStyleAttribute());
     }
 
     public function testCssVarResultIsNotCssRepresentable(): void

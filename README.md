@@ -43,7 +43,7 @@ $placeholder = PlaceholderGenerator::forFile('/path/to/photo.jpg');
 ```
 
 ```html
-<img src="photo.jpg" style="background-image: linear-gradient(#b5b2a5,#b5b2a5)">
+<img src="photo.jpg" style="background-image: linear-gradient(#b5b2a5,#b5b2a5); background-size: cover">
 ```
 
 The placeholder shows behind the `<img>` until the photo has loaded and
@@ -52,7 +52,12 @@ the placeholder once it arrives.
 
 ```css
 background-image: url(photo.jpg), linear-gradient(#b5b2a5,#b5b2a5);
+background-size: cover;
 ```
+
+Always set `background-size: cover`. The `blur` placeholder is a 16 px image,
+and without it the browser tiles it across the box at 16 px instead of
+stretching it. `toStyleAttribute()` (below) includes it for you.
 
 > **Cache the result.** Generating a placeholder decodes the whole photo, at
 > about 20 ms per megapixel with GD. Do it once per image, when it is uploaded
@@ -143,7 +148,7 @@ function lqip(string $path): string
 ```
 
 ```blade
-<img src="{{ Storage::url($photo) }}" style="background-image: {{ lqip($photo) }}">
+<img src="{{ Storage::url($photo) }}" style="background-image: {{ lqip($photo) }}; background-size: cover">
 ```
 
 For many images per page, generate in a queued job after upload rather than
@@ -190,7 +195,7 @@ $result->toStyleAttribute(); // "--lqip:87524"
 ```
 
 For the other modes `toStyleAttribute()` gives
-`background-image:linear-gradient(#b5b2a5,#b5b2a5)`.
+`background-image:linear-gradient(#b5b2a5,#b5b2a5);background-size:cover`.
 
 ### Content-Security-Policy
 

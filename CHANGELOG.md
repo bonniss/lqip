@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `LqipResult::toStyleAttribute()` now adds `background-size:cover`. Without
+  it the `blur` miniature, a 16 px image, was tiled across the element at
+  16 px instead of stretched over it. Gradients fill the box either way.
+
 ## [0.2.0] - 2026-10-11
 
 Runs on Imagick as well as GD, on PHP 7.4 through 8.5.

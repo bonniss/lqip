@@ -89,11 +89,17 @@ final class LqipResult
      * caller hand-concatenating it - which is where the custom property name
      * would otherwise get mistyped, silently producing a placeholder that no
      * stylesheet matches.
+     *
+     * A CSS value comes with `background-size:cover`. A background image is
+     * drawn at its intrinsic size and repeated by default, so the blur mode's
+     * 16px miniature would otherwise tile across the element instead of
+     * stretching over it. Gradients have no intrinsic size and fill the box
+     * either way, so the declaration is harmless for every other mode.
      */
     public function toStyleAttribute(): string
     {
         return $this->kind === self::KIND_CSS_VAR
             ? "{$this->property}:{$this->value}"
-            : "background-image:{$this->value}";
+            : "background-image:{$this->value};background-size:cover";
     }
 }
