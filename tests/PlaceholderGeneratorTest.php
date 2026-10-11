@@ -536,7 +536,6 @@ class PlaceholderGeneratorTest extends TestCase
         ob_start();
         imagepng($image);
         $bytes = ob_get_clean();
-        imagedestroy($image);
 
         return $bytes;
     }

@@ -69,6 +69,31 @@ class DominantColorTest extends TestCase
     }
 
     /**
+     * The case that motivated merging clusters: 28 pixels of near-black in two
+     * shades a viewer cannot tell apart, against 20 of one grey and 16 of
+     * one tan. Counted separately, each black shade loses to the grey; counted
+     * as the one colour they are, black wins.
+     */
+    public function testNearIdenticalShadesCountAsOneColour(): void
+    {
+        $raster = $this->build(8, 8, function (int $x, int $y) {
+            $i = $y * 8 + $x;
+            if ($i < 14) {
+                return 0x020202;
+            }
+            if ($i < 28) {
+                return 0x161412;
+            }
+
+            return $i < 48 ? 0x808080 : 0xC8A060;
+        });
+
+        [$r, $g, $b] = DominantColor::fromRaster($raster);
+
+        $this->assertLessThan(0x20, max($r, $g, $b), sprintf('expected near-black, got #%02x%02x%02x', $r, $g, $b));
+    }
+
+    /**
      * A gradient has no single colour; the result must still be a colour from
      * within the image's range rather than something invented.
      */
