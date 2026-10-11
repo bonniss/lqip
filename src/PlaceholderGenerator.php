@@ -1,5 +1,8 @@
 <?php namespace Bonniss26\Lqip;
 
+use Bonniss26\Lqip\Drivers\Driver;
+use Bonniss26\Lqip\Drivers\GdDriver;
+use Bonniss26\Lqip\Drivers\ImagickDriver;
 use Bonniss26\Lqip\Strategies\BlurStrategy;
 use Bonniss26\Lqip\Strategies\CssOnlyStrategy;
 use Bonniss26\Lqip\Strategies\DominantColorStrategy;
@@ -31,23 +34,23 @@ use Throwable;
  * abstraction. Callers own persistence and configuration; pass options
  * explicitly per call.
  *
- * Decoding, size-capping, and dispatch to a mode's LqipStrategy live here;
- * the actual pixel-crunching per mode lives in Strategies\*.
+ * Decoding is a Drivers\Driver's job (GD or Imagick); the pixel work per mode
+ * lives in Strategies\*; this class validates, dispatches, and turns every
+ * failure into null.
  */
 class PlaceholderGenerator
 {
-    // GD fully decodes an image to an in-memory bitmap before it can downsample it -
-    // there's no fast reduced-resolution decode path like libjpeg-turbo/ImageMagick have.
-    // A 6000x4000 photo alone needs ~90MB just for the bitmap, on top of whatever the
-    // caller has already allocated by request time - routinely more than PHP's default
-    // memory_limit (128M locally). We temporarily raise the limit just for this call
-    // rather than failing on perfectly ordinary large photos.
+    // Raised for the duration of a GD decode only - see GdDriver::load().
     const TEMP_MEMORY_LIMIT = '512M';
 
-    // Still cap it - a source past this many pixels gets skipped rather than risking a
-    // fatal (uncatchable) memory_limit exhaustion even against the raised ceiling above.
-    // Not exposed as an option - it's a safety backstop, not a quality/cost knob.
-    const MAX_SOURCE_PIXELS = 60_000_000;
+    // A source past this many pixels is skipped rather than risking a fatal
+    // (uncatchable) memory exhaustion. A safety backstop, not a quality knob.
+    const MAX_SOURCE_PIXELS = 60000000;
+
+    // Drivers shrink the decoded source to this long edge before any strategy
+    // samples it. Four times MAX_LONG_EDGE, so even the largest miniature is a
+    // genuine reduction rather than an upscale of something already blurry.
+    const WORKING_LONG_EDGE = 256;
 
     // Ranges the numeric options are forced into. Backstops, not quality knobs.
     //
@@ -74,22 +77,103 @@ class PlaceholderGenerator
         'quality' => 25,
         'blur' => true,
         'format' => 'webp', // webp | jpg
+        // auto | gd | imagick, or a Drivers\Driver instance. `auto` takes Imagick
+        // when it is loaded, for its reduced-size JPEG decoding, and GD otherwise.
+        'driver' => 'auto',
     ];
 
     /**
      * Strategies registered via ::extend(), keyed by mode name. Checked before
      * the built-in ones, so a custom registration can also override a
      * built-in mode name.
+     *
+     * @var array<string,LqipStrategy>
      */
-    protected static array $customStrategies = [];
+    protected static $customStrategies = [];
+
+    /** @var Driver|null Set by ::useDriver(); replaces what `auto` resolves to. */
+    protected static $defaultDriver = null;
 
     /**
      * Register (or override) a strategy for a mode name, e.g. a future
-     * `thumbhash` or `css_only` implementation living outside this package.
+     * `thumbhash` implementation living outside this package.
      */
     public static function extend(string $mode, LqipStrategy $strategy): void
     {
         static::$customStrategies[$mode] = $strategy;
+    }
+
+    /**
+     * Every mode name this class will accept: the built-in ones plus anything
+     * registered through ::extend().
+     *
+     * @return string[]
+     */
+    public static function modes(): array
+    {
+        return array_values(array_unique(array_merge(
+            array_keys(static::builtInStrategies()),
+            array_keys(static::$customStrategies)
+        )));
+    }
+
+    /**
+     * Makes $driver what the `auto` driver option resolves to - a custom engine,
+     * or a built-in one pinned process-wide. Pass null to restore detection.
+     */
+    public static function useDriver(?Driver $driver): void
+    {
+        static::$defaultDriver = $driver;
+    }
+
+    /**
+     * Names of the built-in drivers usable in this process, preferred first.
+     *
+     * @return string[]
+     */
+    public static function availableDrivers(): array
+    {
+        $names = [];
+        foreach (static::builtInDrivers() as $name => $driver) {
+            if ($driver->isAvailable()) {
+                $names[] = $name;
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * The driver a `driver` option value resolves to, or null if it names
+     * nothing usable here. Public so a caller can ask the same driver that will
+     * generate a placeholder what it supports - e.g. supportsFormat('webp') when
+     * deciding a cache key.
+     *
+     * @param string|Driver|null $driver
+     */
+    public static function resolveDriver($driver = 'auto'): ?Driver
+    {
+        if ($driver instanceof Driver) {
+            return $driver->isAvailable() ? $driver : null;
+        }
+
+        if ($driver === null || $driver === 'auto') {
+            if (static::$defaultDriver !== null) {
+                return static::$defaultDriver->isAvailable() ? static::$defaultDriver : null;
+            }
+
+            foreach (static::builtInDrivers() as $candidate) {
+                if ($candidate->isAvailable()) {
+                    return $candidate;
+                }
+            }
+
+            return null;
+        }
+
+        $candidate = static::builtInDrivers()[$driver] ?? null;
+
+        return ($candidate && $candidate->isAvailable()) ? $candidate : null;
     }
 
     /**
@@ -128,7 +212,7 @@ class PlaceholderGenerator
             return null;
         }
 
-        $bytes = file_get_contents($path);
+        $bytes = @file_get_contents($path);
         if ($bytes === false) {
             return null;
         }
@@ -142,46 +226,38 @@ class PlaceholderGenerator
      */
     public static function resultForBytes(string $bytes, array $options = []): ?LqipResult
     {
-        if (!$bytes) {
+        if ($bytes === '') {
             return null;
         }
 
-        $options = static::normalizeOptions($options + static::DEFAULT_OPTIONS);
-
-        $previousLimit = ini_get('memory_limit');
-        ini_set('memory_limit', static::TEMP_MEMORY_LIMIT);
-        $source = null;
+        $image = null;
 
         try {
-            $size = @getimagesizefromstring($bytes);
-            if (!$size || $size[0] * $size[1] > static::MAX_SOURCE_PIXELS) {
+            $options = static::normalizeOptions($options + static::DEFAULT_OPTIONS);
+
+            // Resolved before decoding: an unknown mode or a missing engine is a
+            // configuration problem, and should cost nothing rather than a full
+            // decode followed by a null.
+            $strategy = static::resolveStrategy((string) $options['mode']);
+            $driver = static::resolveDriver($options['driver']);
+            if ($strategy === null || $driver === null) {
                 return null;
             }
 
-            $source = @imagecreatefromstring($bytes);
-            if (!$source) {
+            $image = $driver->load($bytes);
+            if ($image === null) {
                 return null;
             }
 
-            [$origWidth, $origHeight] = $size;
-
-            $strategy = static::resolveStrategy($options['mode']);
-
-            return $strategy->generate($source, $origWidth, $origHeight, $options);
+            return $strategy->generate($image, $driver, $options);
         } catch (Throwable $e) {
             return null;
         } finally {
-            // In finally rather than after the generate() call: a strategy that throws
-            // would otherwise leak the decoded bitmap, which is the largest allocation
-            // this class makes.
-            if ($source) {
-                imagedestroy($source);
+            // In finally rather than after generate(): a strategy that throws would
+            // otherwise keep the decoded image alive until the next collection.
+            if ($image) {
+                $image->release();
             }
-
-            // Suppressed: lowering back below the peak usage this call just reached
-            // triggers a warning, not a failure - harmless, the limit simply stays raised
-            // for the rest of this request.
-            @ini_set('memory_limit', $previousLimit);
         }
     }
 
@@ -213,7 +289,7 @@ class PlaceholderGenerator
     }
 
     /**
-     * Forces the numeric options into ranges GD will actually accept.
+     * Forces the numeric options into ranges the engines will actually accept.
      *
      * Not defensive tidying - imagewebp() with a negative quality raises E_ERROR,
      * which no try/catch can intercept, so a single out-of-range value takes the
@@ -225,29 +301,47 @@ class PlaceholderGenerator
     {
         $options['quality'] = max(self::MIN_QUALITY, min(self::MAX_QUALITY, (int) $options['quality']));
         $options['long_edge'] = max(self::MIN_LONG_EDGE, min(self::MAX_LONG_EDGE, (int) $options['long_edge']));
+        $options['blur'] = (bool) $options['blur'];
 
         return $options;
     }
 
-    protected static function resolveStrategy(string $mode): LqipStrategy
+    /**
+     * Null for a mode nobody registered. It used to fall back to `blur`, which
+     * turned a typo into the most expensive branch, silently.
+     */
+    protected static function resolveStrategy(string $mode): ?LqipStrategy
     {
         return static::$customStrategies[$mode]
             ?? static::builtInStrategies()[$mode]
-            // Unknown mode names fall back to `blur` - the most broadly
-            // acceptable default when misconfigured, same as before this
-            // was a match() with a `default` arm.
-            ?? static::builtInStrategies()['blur'];
+            ?? null;
     }
 
+    /** @return array<string,LqipStrategy> */
     protected static function builtInStrategies(): array
     {
         static $strategies = null;
 
-        return $strategies ??= [
+        return $strategies ?? $strategies = [
             'dominant_color' => new DominantColorStrategy(),
             'gradient' => new GradientStrategy(),
             'blur' => new BlurStrategy(),
             'css_only' => new CssOnlyStrategy(),
+        ];
+    }
+
+    /**
+     * In `auto` preference order.
+     *
+     * @return array<string,Driver>
+     */
+    protected static function builtInDrivers(): array
+    {
+        static $drivers = null;
+
+        return $drivers ?? $drivers = [
+            'imagick' => new ImagickDriver(),
+            'gd' => new GdDriver(),
         ];
     }
 }

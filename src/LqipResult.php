@@ -30,11 +30,20 @@ final class LqipResult
      * PHP floor moves to 8.1 these should become a backed `enum LqipKind: string`
      * keeping exactly these backing values, so already-cached rows stay readable.
      */
-    private function __construct(
-        private string $kind,
-        private string $value,
-        private ?string $property
-    ) {
+    /** @var string */
+    private $kind;
+
+    /** @var string */
+    private $value;
+
+    /** @var string|null */
+    private $property;
+
+    private function __construct(string $kind, string $value, ?string $property)
+    {
+        $this->kind = $kind;
+        $this->value = $value;
+        $this->property = $property;
     }
 
     public static function css(string $value): self

@@ -1,5 +1,7 @@
 <?php namespace Bonniss26\Lqip\Strategies;
 
+use Bonniss26\Lqip\Drivers\Driver;
+use Bonniss26\Lqip\Drivers\Image;
 use Bonniss26\Lqip\LqipResult;
 use Bonniss26\Lqip\Support\DominantColor;
 
@@ -9,12 +11,11 @@ use Bonniss26\Lqip\Support\DominantColor;
  */
 class DominantColorStrategy implements LqipStrategy
 {
-    public function generate($source, int $origWidth, int $origHeight, array $options): ?LqipResult
+    public function generate(Image $image, Driver $driver, array $options): ?LqipResult
     {
-        $rgb = DominantColor::forImage($source, $origWidth, $origHeight);
-        if ($rgb === null) {
-            return null;
-        }
+        $rgb = DominantColor::fromRaster(
+            $image->sample(DominantColor::SAMPLE_SIZE, DominantColor::SAMPLE_SIZE)
+        );
 
         $hex = sprintf('#%02x%02x%02x', ...$rgb);
 

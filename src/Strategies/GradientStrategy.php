@@ -1,6 +1,9 @@
 <?php namespace Bonniss26\Lqip\Strategies;
 
+use Bonniss26\Lqip\Drivers\Driver;
+use Bonniss26\Lqip\Drivers\Image;
 use Bonniss26\Lqip\LqipResult;
+use Bonniss26\Lqip\Support\Raster;
 
 /**
  * A handful of CSS radial-gradients built from a 2x2 sample grid - no image
@@ -8,10 +11,9 @@ use Bonniss26\Lqip\LqipResult;
  */
 class GradientStrategy implements LqipStrategy
 {
-    public function generate($source, int $origWidth, int $origHeight, array $options): ?LqipResult
+    public function generate(Image $image, Driver $driver, array $options): ?LqipResult
     {
-        $grid = imagecreatetruecolor(2, 2);
-        imagecopyresampled($grid, $source, 0, 0, 0, 0, 2, 2, $origWidth, $origHeight);
+        $grid = $image->sample(2, 2);
 
         [$topLeft, $topRight, $bottomLeft, $bottomRight] = [
             $this->hexAt($grid, 0, 0),
@@ -19,7 +21,6 @@ class GradientStrategy implements LqipStrategy
             $this->hexAt($grid, 0, 1),
             $this->hexAt($grid, 1, 1),
         ];
-        imagedestroy($grid);
 
         // The solid linear-gradient as the last (bottom) layer stands in for a plain
         // background-color fallback - a background-color declaration can't be mixed
@@ -32,10 +33,8 @@ class GradientStrategy implements LqipStrategy
             . "linear-gradient({$topLeft},{$topLeft})");
     }
 
-    protected function hexAt($image, int $x, int $y): string
+    protected function hexAt(Raster $grid, int $x, int $y): string
     {
-        $rgb = imagecolorsforindex($image, imagecolorat($image, $x, $y));
-
-        return sprintf('#%02x%02x%02x', $rgb['red'], $rgb['green'], $rgb['blue']);
+        return sprintf('#%06x', $grid->rgbAt($x, $y));
     }
 }

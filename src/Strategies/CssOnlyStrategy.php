@@ -1,9 +1,12 @@
 <?php namespace Bonniss26\Lqip\Strategies;
 
+use Bonniss26\Lqip\Drivers\Driver;
+use Bonniss26\Lqip\Drivers\Image;
 use Bonniss26\Lqip\LqipResult;
 use Bonniss26\Lqip\Support\DominantColor;
 use Bonniss26\Lqip\Support\LqipInteger;
 use Bonniss26\Lqip\Support\Oklab;
+use Bonniss26\Lqip\Support\Raster;
 
 /**
  * The whole placeholder as a single integer, decoded entirely in CSS.
@@ -38,12 +41,11 @@ class CssOnlyStrategy implements LqipStrategy
     const SAMPLE_WIDTH = 24;   // GRID_COLUMNS * 8
     const SAMPLE_HEIGHT = 16;  // GRID_ROWS * 8
 
-    public function generate($source, int $origWidth, int $origHeight, array $options): ?LqipResult
+    public function generate(Image $image, Driver $driver, array $options): ?LqipResult
     {
-        $rgb = DominantColor::forImage($source, $origWidth, $origHeight);
-        if ($rgb === null) {
-            return null;
-        }
+        $rgb = DominantColor::fromRaster(
+            $image->sample(DominantColor::SAMPLE_SIZE, DominantColor::SAMPLE_SIZE)
+        );
 
         [$ll, $aaa, $bbb] = LqipInteger::findOklabBits(...Oklab::fromSrgb(...$rgb));
 
@@ -52,7 +54,7 @@ class CssOnlyStrategy implements LqipStrategy
         // against anything else desynchronises encoder and decoder.
         [$baseL] = LqipInteger::bitsToOklab($ll, $aaa, $bbb);
 
-        $cells = $this->cells($source, $origWidth, $origHeight, $baseL);
+        $cells = $this->cells($image->sample(self::SAMPLE_WIDTH, self::SAMPLE_HEIGHT), $baseL);
 
         return LqipResult::cssVar(
             (string) LqipInteger::pack($cells, $ll, $aaa, $bbb),
@@ -69,28 +71,20 @@ class CssOnlyStrategy implements LqipStrategy
      * the GD equivalent, imagegammacorrect(), is not usable here - it works on
      * 8-bit data, so `pow(c/255, 2) * 255` collapses every channel value at or
      * below 15 to zero, destroying shadow detail before it can be averaged. It
-     * also mutates its argument, and the source belongs to the caller.
+     * also mutates its argument.
      *
-     * So: let GD do the bulk reduction, then average each 8x8 block into linear
-     * float here. The source -> 24x16 step is still averaged in gamma space,
-     * which confines that error to 1/64 of each cell while the dominant 64:1
-     * average is linear.
+     * So: let the engine do the bulk reduction, then average each 8x8 block into
+     * linear float here. The source -> 24x16 step is still averaged in gamma
+     * space, which confines that error to 1/64 of each cell while the dominant
+     * 64:1 average is linear.
      *
+     * @param Raster $sample SAMPLE_WIDTH x SAMPLE_HEIGHT. Aspect ratio is
+     *                       deliberately ignored - the grid maps onto the image
+     *                       box, however it is shaped.
      * @return array Six ints 0-3, row-major.
      */
-    private function cells($source, int $origWidth, int $origHeight, float $baseL): array
+    private function cells(Raster $sample, float $baseL): array
     {
-        // Aspect ratio is deliberately ignored - the grid maps onto the image box,
-        // however it is shaped.
-        $sample = imagecreatetruecolor(self::SAMPLE_WIDTH, self::SAMPLE_HEIGHT);
-        imagecopyresampled(
-            $sample,
-            $source,
-            0, 0, 0, 0,
-            self::SAMPLE_WIDTH, self::SAMPLE_HEIGHT,
-            $origWidth, $origHeight
-        );
-
         $blockWidth = intdiv(self::SAMPLE_WIDTH, LqipInteger::GRID_COLUMNS);
         $blockHeight = intdiv(self::SAMPLE_HEIGHT, LqipInteger::GRID_ROWS);
         $pixelsPerBlock = $blockWidth * $blockHeight;
@@ -102,7 +96,7 @@ class CssOnlyStrategy implements LqipStrategy
 
                 for ($y = $row * $blockHeight; $y < ($row + 1) * $blockHeight; $y++) {
                     for ($x = $column * $blockWidth; $x < ($column + 1) * $blockWidth; $x++) {
-                        $pixel = imagecolorat($sample, $x, $y);
+                        $pixel = $sample->rgbAt($x, $y);
                         $r += Oklab::srgbChannelToLinear((($pixel >> 16) & 0xFF) / 255);
                         $g += Oklab::srgbChannelToLinear((($pixel >> 8) & 0xFF) / 255);
                         $b += Oklab::srgbChannelToLinear(($pixel & 0xFF) / 255);
@@ -123,8 +117,6 @@ class CssOnlyStrategy implements LqipStrategy
                 $cells[] = (int) round($value * 3);
             }
         }
-
-        imagedestroy($sample);
 
         return $cells;
     }

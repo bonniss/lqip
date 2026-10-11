@@ -1,9 +1,10 @@
 <?php namespace Bonniss26\Lqip\Tests;
 
+use Bonniss26\Lqip\Drivers\Driver;
+use Bonniss26\Lqip\Drivers\Image;
 use Bonniss26\Lqip\Exceptions\NotCssRepresentable;
 use Bonniss26\Lqip\LqipResult;
 use Bonniss26\Lqip\PlaceholderGenerator;
-use Bonniss26\Lqip\Strategies\CssOnlyStrategy;
 use Bonniss26\Lqip\Strategies\LqipStrategy;
 use Bonniss26\Lqip\Support\LqipInteger;
 use PHPUnit\Framework\TestCase;
@@ -35,9 +36,9 @@ class PlaceholderGeneratorTest extends TestCase
     public function testDominantColorProducesExactKnownOutput(): void
     {
         $cases = [
-            [0xE0, 0x40, 0x20, 'linear-gradient(#e44224,#e44224)'],
-            [0x00, 0xAA, 0xFF, 'linear-gradient(#04aafc,#04aafc)'],
-            [0x10, 0x20, 0x30, 'linear-gradient(#142234,#142234)'],
+            [0xE0, 0x40, 0x20, 'linear-gradient(#e04020,#e04020)'],
+            [0x00, 0xAA, 0xFF, 'linear-gradient(#00aaff,#00aaff)'],
+            [0x10, 0x20, 0x30, 'linear-gradient(#102030,#102030)'],
         ];
 
         foreach ($cases as [$r, $g, $b, $expected]) {
@@ -50,15 +51,15 @@ class PlaceholderGeneratorTest extends TestCase
     }
 
     /**
-     * When two colours cover exactly the same number of pixels, arsort() is
-     * stable (PHP 8.0+) so the tie falls back to insertion order, which is the
-     * `for x { for y }` scan order - i.e. the leftmost colour wins. Flipping the
-     * loop nesting during a refactor would silently flip the result here.
+     * When two colours cover exactly the same number of pixels, the tie goes to
+     * whichever is met first in DominantColor's column-major scan - i.e. the
+     * leftmost colour wins. Flipping the scan order during a refactor would
+     * silently flip the result here.
      */
     public function testDominantColorResolvesTiesByScanOrder(): void
     {
         $this->assertSame(
-            'linear-gradient(#fc0204,#fc0204)',
+            'linear-gradient(#ff0000,#ff0000)',
             PlaceholderGenerator::forBytes(
                 $this->makeVerticalSplitPng([0xFF, 0x00, 0x00], [0x00, 0x00, 0xFF]),
                 ['mode' => 'dominant_color']
@@ -67,7 +68,7 @@ class PlaceholderGeneratorTest extends TestCase
         );
 
         $this->assertSame(
-            'linear-gradient(#0402fc,#0402fc)',
+            'linear-gradient(#0000ff,#0000ff)',
             PlaceholderGenerator::forBytes(
                 $this->makeVerticalSplitPng([0x00, 0x00, 0xFF], [0xFF, 0x00, 0x00]),
                 ['mode' => 'dominant_color']
@@ -107,7 +108,7 @@ class PlaceholderGeneratorTest extends TestCase
 
         $result = PlaceholderGenerator::forBytes($bytes, ['mode' => 'blur']);
 
-        $expectedMime = function_exists('imagewebp') ? 'webp' : 'jpeg';
+        $expectedMime = PlaceholderGenerator::resolveDriver('auto')->supportsFormat('webp') ? 'webp' : 'jpeg';
         $this->assertMatchesRegularExpression(
             "/^url\\('data:image\\/{$expectedMime};base64,[A-Za-z0-9+\\/=]+'\\)$/",
             $result
@@ -341,23 +342,6 @@ class PlaceholderGeneratorTest extends TestCase
         $this->assertSame(LqipResult::KIND_CSS_VAR, $result->kind());
     }
 
-    public function testCssOnlyDoesNotModifyTheDecodedSource(): void
-    {
-        $image = imagecreatetruecolor(24, 16);
-        imagefilledrectangle($image, 0, 0, 23, 15, imagecolorallocate($image, 0x33, 0x66, 0x99));
-        imagefilledrectangle($image, 0, 0, 11, 7, imagecolorallocate($image, 0xCC, 0x33, 0x11));
-        $before = [imagecolorat($image, 0, 0), imagecolorat($image, 23, 15)];
-
-        (new CssOnlyStrategy())->generate($image, 24, 16, PlaceholderGenerator::DEFAULT_OPTIONS);
-
-        $this->assertSame(
-            $before,
-            [imagecolorat($image, 0, 0), imagecolorat($image, 23, 15)],
-            'the strategy must not mutate the source image the generator still owns'
-        );
-        imagedestroy($image);
-    }
-
     public function testForBytesThrowsForTheCssOnlyMode(): void
     {
         $this->expectException(NotCssRepresentable::class);
@@ -425,7 +409,7 @@ class PlaceholderGeneratorTest extends TestCase
     public function testForBytesThrowsWhenAStrategyProducesANonCssValue(): void
     {
         $strategy = new class implements LqipStrategy {
-            public function generate($source, int $origWidth, int $origHeight, array $options): ?LqipResult
+            public function generate(Image $image, Driver $driver, array $options): ?LqipResult
             {
                 return LqipResult::cssVar('42', '--x');
             }
@@ -449,7 +433,7 @@ class PlaceholderGeneratorTest extends TestCase
     public function testUndecodableInputIsStillNullEvenInANonCssMode(): void
     {
         $strategy = new class implements LqipStrategy {
-            public function generate($source, int $origWidth, int $origHeight, array $options): ?LqipResult
+            public function generate(Image $image, Driver $driver, array $options): ?LqipResult
             {
                 return LqipResult::cssVar('42', '--x');
             }
@@ -462,7 +446,7 @@ class PlaceholderGeneratorTest extends TestCase
     public function testExtendRegistersACustomStrategyForANewMode(): void
     {
         $strategy = new class implements LqipStrategy {
-            public function generate($source, int $origWidth, int $origHeight, array $options): ?LqipResult
+            public function generate(Image $image, Driver $driver, array $options): ?LqipResult
             {
                 return LqipResult::css('custom-placeholder-value');
             }
@@ -481,7 +465,7 @@ class PlaceholderGeneratorTest extends TestCase
     public function testExtendCanOverrideABuiltInModeName(): void
     {
         $strategy = new class implements LqipStrategy {
-            public function generate($source, int $origWidth, int $origHeight, array $options): ?LqipResult
+            public function generate(Image $image, Driver $driver, array $options): ?LqipResult
             {
                 return LqipResult::css('overridden-gradient');
             }
