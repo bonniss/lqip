@@ -23,7 +23,7 @@ repository first:
 
 ```bash
 composer config repositories.lqip vcs https://github.com/bonniss/lqip
-composer require bonniss26/lqip:^0.1
+composer require bonniss26/lqip:^0.2
 ```
 
 Needs `ext-gd` or `ext-imagick`, or both - see [Drivers](#drivers).
