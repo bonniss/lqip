@@ -126,14 +126,19 @@ final class ImagickDriver implements Driver
         $image = null;
 
         try {
+            $transparent = $raster->hasTransparency();
             $image = new \Imagick();
-            $image->newImage($raster->width(), $raster->height(), new \ImagickPixel('black'));
+            $image->newImage(
+                $raster->width(),
+                $raster->height(),
+                new \ImagickPixel($transparent ? 'transparent' : 'black')
+            );
             $image->importImagePixels(
                 0, 0,
                 $raster->width(), $raster->height(),
-                'RGB',
+                $transparent ? 'RGBA' : 'RGB',
                 \Imagick::PIXEL_CHAR,
-                $raster->toRgbBytes()
+                $transparent ? $raster->toRgbaBytes() : $raster->toRgbBytes()
             );
 
             $image->setImageFormat($format === 'webp' ? 'WEBP' : 'JPEG');
@@ -167,11 +172,9 @@ final class ImagickDriver implements Driver
             $frame->transformImageColorspace(\Imagick::COLORSPACE_SRGB);
         }
 
-        // Composite transparency onto black, matching GD's opaque canvas.
-        if ($frame->getImageAlphaChannel()) {
-            $frame->setImageBackgroundColor(new \ImagickPixel('black'));
-            $frame->setImageAlphaChannel(\Imagick::ALPHACHANNEL_REMOVE);
-        }
+        // Alpha is kept: strategies decide what transparency means for them.
+        // ImageMagick resizes with alpha-weighted colour, as GD does once
+        // blending is off, so a transparent pixel's colour cannot bleed in.
 
         $width = $frame->getImageWidth();
         $height = $frame->getImageHeight();

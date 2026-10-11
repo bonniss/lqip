@@ -321,27 +321,6 @@ class PlaceholderGeneratorTest extends TestCase
         );
     }
 
-    /**
-     * The reference implementation emits no placeholder at all for images with
-     * transparency. This package deliberately does not follow that: every other
-     * mode already composites alpha onto black, and returning null here - in a
-     * class where null also means "broken image" - would be undiagnosable.
-     */
-    public function testCssOnlyStillProducesAValueForAnImageWithAlpha(): void
-    {
-        $image = imagecreatetruecolor(24, 16);
-        imagesavealpha($image, true);
-        imagefill($image, 0, 0, imagecolorallocatealpha($image, 0x20, 0x80, 0xC0, 64));
-
-        $result = PlaceholderGenerator::resultForBytes(
-            $this->encodePng($image),
-            ['mode' => 'css_only']
-        );
-
-        $this->assertNotNull($result);
-        $this->assertSame(LqipResult::KIND_CSS_VAR, $result->kind());
-    }
-
     public function testForBytesThrowsForTheCssOnlyMode(): void
     {
         $this->expectException(NotCssRepresentable::class);

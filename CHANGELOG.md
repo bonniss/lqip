@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Images with transparency keep it.** Every mode used to composite alpha
+  onto black, so a logo or a cut-out product shot got a black placeholder.
+  Now `dominant_color` takes the colour of the painted pixels only, at the
+  image's coverage (`#ff000080` for a red logo filling half its box);
+  `gradient` gives each corner its alpha and drops the solid bottom layer;
+  `blur` keeps the shape in a transparent WebP (a JPEG is flattened onto
+  white); `css_only` returns `null`, as the reference implementation does,
+  because its format has no way to express transparency. Opaque images
+  produce byte-identical output to 0.2.0 on both drivers.
+
+### Added
+
+- `background` option: composite onto a colour (`#ffffff`, `#fff` or
+  `0xFFFFFF`) before anything else, for when the page colour is known. An
+  invalid colour returns `null`, like an unknown mode.
+
 ### Fixed
 
 - `LqipResult::toStyleAttribute()` now adds `background-size:cover`. Without

@@ -62,4 +62,47 @@ class RasterTest extends TestCase
         $this->assertSame([1, 2], $stored->orient(0)->pixels());
         $this->assertSame([1, 2], $stored->orient(9)->pixels());
     }
+
+    public function testAnAllOpaqueAlphaPlaneIsDropped(): void
+    {
+        $raster = new Raster(2, 1, [1, 2], [255, 255]);
+
+        $this->assertFalse($raster->hasTransparency());
+        $this->assertNull($raster->alphas());
+        $this->assertSame(255, $raster->alphaAt(1, 0));
+        $this->assertSame(1.0, $raster->coverage());
+    }
+
+    public function testRgbaBytesRoundTrip(): void
+    {
+        $bytes = [0x12, 0x34, 0x56, 0xFF, 0xAB, 0xCD, 0xEF, 0x40];
+        $raster = Raster::fromRgbaBytes(2, 1, $bytes);
+
+        $this->assertSame([0x123456, 0xABCDEF], $raster->pixels());
+        $this->assertSame([255, 0x40], $raster->alphas());
+        $this->assertSame($bytes, $raster->toRgbaBytes());
+        $this->assertEqualsWithDelta((255 + 0x40) / 510, $raster->coverage(), 1e-9);
+    }
+
+    public function testFlattenCompositesOntoTheBackground(): void
+    {
+        $raster = new Raster(3, 1, [0xFF0000, 0xFF0000, 0x0000FF], [255, 128, 0]);
+        $flat = $raster->flatten(0xFFFFFF);
+
+        $this->assertFalse($flat->hasTransparency());
+        $this->assertSame([0xFF0000, 0xFF7F7F, 0xFFFFFF], $flat->pixels());
+    }
+
+    public function testOrientCarriesAlphaAlong(): void
+    {
+        $this->assertSame([10, 20], (new Raster(2, 1, [1, 2], [10, 20]))->orient(6)->alphas());
+        $this->assertSame([20, 10], (new Raster(2, 1, [1, 2], [10, 20]))->orient(2)->alphas());
+    }
+
+    public function testRejectsAnAlphaPlaneOfTheWrongSize(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        new Raster(2, 1, [1, 2], [255]);
+    }
 }

@@ -67,13 +67,58 @@ class DriverContractTest extends TestCase
     }
 
     /** @dataProvider drivers */
-    public function testCompositesTransparencyOntoBlack(Driver $driver): void
+    public function testKeepsTransparency(Driver $driver): void
     {
         $this->requireDriver($driver);
 
-        $sample = $driver->load(Fixtures::transparentPng(16, 16))->sample(1, 1);
+        $sample = $driver->load(Fixtures::transparentPng(16, 16))->sample(4, 4);
 
-        $this->assertSame(0x000000, $sample->rgbAt(0, 0));
+        $this->assertTrue($sample->hasTransparency());
+        $this->assertSame(0, $sample->alphaAt(0, 0));
+    }
+
+    /**
+     * The colour of a transparent pixel is meaningless (here blue), and must not
+     * leak into an average: half opaque red, half transparent blue, resampled
+     * to one pixel, is red at half alpha - not purple, and not darkened.
+     *
+     * @dataProvider drivers
+     */
+    public function testResamplingWeightsColourByAlpha(Driver $driver): void
+    {
+        $this->requireDriver($driver);
+
+        $sample = $driver->load(Fixtures::logoPng(0xFF0000, 16, 16))->sample(1, 1);
+
+        $this->assertSame(0xFF0000, $sample->rgbAt(0, 0));
+        $this->assertEqualsWithDelta(128, $sample->alphaAt(0, 0), 2);
+    }
+
+    /** @dataProvider drivers */
+    public function testAnOpaqueSourceSamplesWithoutAnAlphaPlane(Driver $driver): void
+    {
+        $this->requireDriver($driver);
+
+        $this->assertFalse($driver->load(Fixtures::solidPng(0x336699, 16, 16))->sample(4, 4)->hasTransparency());
+        $this->assertFalse(
+            $driver->load(Fixtures::splitJpeg(0xFF0000, 0x0000FF, 16, 16))->sample(4, 4)->hasTransparency()
+        );
+    }
+
+    /** @dataProvider drivers */
+    public function testEncodesWebpWithAlpha(Driver $driver): void
+    {
+        $this->requireDriver($driver);
+        if (!$driver->supportsFormat('webp') || !function_exists('imagecreatefromwebp')) {
+            $this->markTestSkipped('no WebP support to encode or to decode the result');
+        }
+
+        $raster = new Raster(2, 1, [0xFF0000, 0x0000FF], [255, 0]);
+        $encoded = $driver->encode($raster, 'webp', 100);
+        $decoded = imagecreatefromstring($encoded['bytes']);
+
+        $this->assertSame(0, (imagecolorat($decoded, 0, 0) >> 24) & 0x7F, 'left pixel opaque');
+        $this->assertSame(127, (imagecolorat($decoded, 1, 0) >> 24) & 0x7F, 'right pixel transparent');
     }
 
     /**

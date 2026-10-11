@@ -62,4 +62,28 @@ class GaussianBlurTest extends TestCase
 
         $this->assertSame([0x000000, 0xFFFFFF], GaussianBlur::apply($raster, 0)->pixels());
     }
+
+    /**
+     * A transparent pixel's colour must not bleed into its painted neighbour:
+     * opaque red beside transparent blue stays red, and only the alpha
+     * softens across the seam.
+     */
+    public function testTransparentColourDoesNotBleed(): void
+    {
+        $raster = new Raster(4, 1, [0xFF0000, 0xFF0000, 0x0000FF, 0x0000FF], [255, 255, 0, 0]);
+        $blurred = GaussianBlur::apply($raster, 2);
+
+        foreach ([0, 1, 2] as $x) {
+            $this->assertSame(0xFF0000, $blurred->rgbAt($x, 0), "pixel {$x}");
+        }
+        $this->assertGreaterThan($blurred->alphaAt(2, 0), $blurred->alphaAt(1, 0));
+        $this->assertGreaterThan($blurred->alphaAt(1, 0), $blurred->alphaAt(0, 0));
+    }
+
+    public function testAFullyTransparentImageStaysFullyTransparent(): void
+    {
+        $blurred = GaussianBlur::apply(new Raster(3, 3, array_fill(0, 9, 0x00FF00), array_fill(0, 9, 0)), 2);
+
+        $this->assertSame(0.0, $blurred->coverage());
+    }
 }

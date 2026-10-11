@@ -43,9 +43,22 @@ class CssOnlyStrategy implements LqipStrategy
 
     public function generate(Image $image, Driver $driver, array $options): ?LqipResult
     {
+        $cellSample = $image->sample(self::SAMPLE_WIDTH, self::SAMPLE_HEIGHT);
+
+        // The format has no way to say "transparent here": every cell is a
+        // shade of one opaque base colour. The reference implementation skips
+        // such images rather than paint a box behind a logo, and so does this.
+        // A caller who knows the page colour can pass `background` instead.
+        if ($cellSample->hasTransparency()) {
+            return null;
+        }
+
         $rgb = DominantColor::fromRaster(
             $image->sample(DominantColor::SAMPLE_SIZE, DominantColor::SAMPLE_SIZE)
         );
+        if ($rgb === null) {
+            return null;
+        }
 
         [$ll, $aaa, $bbb] = LqipInteger::findOklabBits(...Oklab::fromSrgb(...$rgb));
 
@@ -54,7 +67,7 @@ class CssOnlyStrategy implements LqipStrategy
         // against anything else desynchronises encoder and decoder.
         [$baseL] = LqipInteger::bitsToOklab($ll, $aaa, $bbb);
 
-        $cells = $this->cells($image->sample(self::SAMPLE_WIDTH, self::SAMPLE_HEIGHT), $baseL);
+        $cells = $this->cells($cellSample, $baseL);
 
         return LqipResult::cssVar(
             (string) LqipInteger::pack($cells, $ll, $aaa, $bbb),

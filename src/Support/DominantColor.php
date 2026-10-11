@@ -57,20 +57,40 @@ final class DominantColor
     const MERGE_DISTANCE = 40;
 
     /**
-     * @param Raster $sample Typically SAMPLE_SIZE square; any size works.
-     * @return array{0:int,1:int,2:int} [r, g, b], the mean of the pixels nearest
-     *                                  the most-used palette colour.
+     * A pixel at least this opaque counts towards the colour; anything fainter
+     * is background showing through. Half-way, so the anti-aliased rim of a
+     * logo neither dominates nor disappears.
      */
-    public static function fromRaster(Raster $sample): array
+    const MIN_ALPHA = 128;
+
+    /**
+     * @param Raster $sample Typically SAMPLE_SIZE square; any size works.
+     * @return array{0:int,1:int,2:int}|null [r, g, b], the mean of the pixels
+     *         nearest the most-used palette colour; null when nothing in the
+     *         sample is opaque enough to have a colour.
+     */
+    public static function fromRaster(Raster $sample): ?array
     {
         // Column-major (x outer, y inner) on purpose: a cluster's tie-break key is
         // the scan position of its first pixel, so this order decides which of
         // two equally used colours wins - the leftmost one.
+        //
+        // Keyed by scan position, which is what every step below treats as a
+        // pixel's identity - so skipping transparent pixels leaves the positions
+        // of the rest, and an opaque image goes through exactly as before.
         $pixels = [];
+        $position = 0;
         for ($x = 0; $x < $sample->width(); $x++) {
             for ($y = 0; $y < $sample->height(); $y++) {
-                $pixels[] = $sample->channelsAt($x, $y);
+                if ($sample->alphaAt($x, $y) >= self::MIN_ALPHA) {
+                    $pixels[$position] = $sample->channelsAt($x, $y);
+                }
+                $position++;
             }
+        }
+
+        if (!$pixels) {
+            return null;
         }
 
         $palette = array_map([self::class, 'mean'], self::medianCut($pixels));

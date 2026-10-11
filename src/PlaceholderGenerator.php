@@ -1,6 +1,7 @@
 <?php namespace Bonniss26\Lqip;
 
 use Bonniss26\Lqip\Drivers\Driver;
+use Bonniss26\Lqip\Drivers\FlattenedImage;
 use Bonniss26\Lqip\Drivers\GdDriver;
 use Bonniss26\Lqip\Drivers\ImagickDriver;
 use Bonniss26\Lqip\Strategies\BlurStrategy;
@@ -80,6 +81,10 @@ class PlaceholderGenerator
         // auto | gd | imagick, or a Drivers\Driver instance. `auto` takes Imagick
         // when it is loaded, for its reduced-size JPEG decoding, and GD otherwise.
         'driver' => 'auto',
+        // null keeps transparency: a logo gets a placeholder in its own colour
+        // with its own empty space. A colour ('#ffffff', '#fff' or 0xFFFFFF)
+        // composites the image onto it first - for when you know the page behind.
+        'background' => null,
     ];
 
     /**
@@ -240,13 +245,18 @@ class PlaceholderGenerator
             // decode followed by a null.
             $strategy = static::resolveStrategy((string) $options['mode']);
             $driver = static::resolveDriver($options['driver']);
-            if ($strategy === null || $driver === null) {
+            $background = static::parseColor($options['background']);
+            if ($strategy === null || $driver === null || $background === false) {
                 return null;
             }
 
             $image = $driver->load($bytes);
             if ($image === null) {
                 return null;
+            }
+
+            if ($background !== null) {
+                $image = new FlattenedImage($image, $background);
             }
 
             return $strategy->generate($image, $driver, $options);
@@ -304,6 +314,35 @@ class PlaceholderGenerator
         $options['blur'] = (bool) $options['blur'];
 
         return $options;
+    }
+
+    /**
+     * The `background` option as 0xRRGGBB, null for none, or false when it is
+     * not a colour - which, like an unknown mode, is a configuration error that
+     * should cost nothing rather than silently producing something else.
+     *
+     * @param mixed $value '#rrggbb', '#rgb' (the # optional), an int, or null.
+     * @return int|null|false
+     */
+    protected static function parseColor($value)
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (is_int($value)) {
+            return $value >= 0 && $value <= 0xFFFFFF ? $value : false;
+        }
+
+        if (!is_string($value) || !preg_match('/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i', trim($value), $match)) {
+            return false;
+        }
+
+        $hex = strlen($match[1]) === 3
+            ? $match[1][0] . $match[1][0] . $match[1][1] . $match[1][1] . $match[1][2] . $match[1][2]
+            : $match[1];
+
+        return (int) hexdec($hex);
     }
 
     /**

@@ -18,6 +18,9 @@ class BlurStrategy implements LqipStrategy
      */
     const BLUR_PASSES = 2;
 
+    /** What a transparent image is flattened onto when it has to be a JPEG. */
+    const JPEG_BACKGROUND = 0xFFFFFF;
+
     public function generate(Image $image, Driver $driver, array $options): ?LqipResult
     {
         $targetLongEdge = (int) $options['long_edge'];
@@ -41,6 +44,13 @@ class BlurStrategy implements LqipStrategy
         // placeholder at that price still beats none.
         if (!$driver->supportsFormat($format)) {
             $format = 'jpg';
+        }
+
+        // WebP keeps transparency, so a logo's miniature is a blurred logo. JPEG
+        // has no alpha: white is the likeliest page behind it, and a caller who
+        // knows better passes `background`, which flattens before this point.
+        if ($format === 'jpg') {
+            $raster = $raster->flatten(self::JPEG_BACKGROUND);
         }
 
         $encoded = $driver->encode($raster, $format, $quality);

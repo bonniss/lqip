@@ -37,6 +37,10 @@ final class GaussianBlur
 
     private static function pass(Raster $raster): Raster
     {
+        if ($raster->hasTransparency()) {
+            return self::passWithAlpha($raster);
+        }
+
         $w = $raster->width();
         $h = $raster->height();
         $source = $raster->pixels();
@@ -64,5 +68,52 @@ final class GaussianBlur
         }
 
         return new Raster($w, $h, $out);
+    }
+
+    /**
+     * The same kernel on an image with transparency. GD has nothing to match
+     * here - imagefilter() blurs alpha and colour independently, so a
+     * transparent pixel's meaningless colour (often black) bleeds into the
+     * edge of whatever sits next to it. Instead each colour is weighted by its
+     * alpha, which is what blurring premultiplied colour amounts to, and the
+     * alpha is blurred with the plain kernel. Edges are clamped and results
+     * truncated, as in the opaque pass.
+     */
+    private static function passWithAlpha(Raster $raster): Raster
+    {
+        $w = $raster->width();
+        $h = $raster->height();
+        $source = $raster->pixels();
+        $sourceAlphas = $raster->alphas();
+
+        $out = $alphas = [];
+        for ($y = 0; $y < $h; $y++) {
+            for ($x = 0; $x < $w; $x++) {
+                $r = $g = $b = $weightSum = 0;
+
+                for ($j = 0; $j < 3; $j++) {
+                    $sy = min(max($y - 1 + $j, 0), $h - 1);
+                    for ($i = 0; $i < 3; $i++) {
+                        $sx = min(max($x - 1 + $i, 0), $w - 1);
+                        $pixel = $source[$sy * $w + $sx];
+                        $alpha = $sourceAlphas[$sy * $w + $sx];
+                        $weight = self::KERNEL[$j][$i] * $alpha;
+
+                        $r += (($pixel >> 16) & 0xFF) * $weight;
+                        $g += (($pixel >> 8) & 0xFF) * $weight;
+                        $b += ($pixel & 0xFF) * $weight;
+                        $weightSum += $weight;
+                    }
+                }
+
+                $out[] = $weightSum === 0
+                    ? 0
+                    : (intdiv($r, $weightSum) << 16) | (intdiv($g, $weightSum) << 8) | intdiv($b, $weightSum);
+                // The sum of kernel x alpha, so also the blurred alpha x 16.
+                $alphas[] = intdiv($weightSum, self::DIVISOR);
+            }
+        }
+
+        return new Raster($w, $h, $out, $alphas);
     }
 }

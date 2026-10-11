@@ -27,6 +27,14 @@ final class ImagickSource extends OrientedImage
             // target means invented colours.
             $sample->resizeImage($width, $height, \Imagick::FILTER_BOX, 1);
 
+            if ($sample->getImageAlphaChannel()) {
+                return Raster::fromRgbaBytes(
+                    $width,
+                    $height,
+                    $sample->exportImagePixels(0, 0, $width, $height, 'RGBA', \Imagick::PIXEL_CHAR)
+                );
+            }
+
             return Raster::fromRgbBytes(
                 $width,
                 $height,

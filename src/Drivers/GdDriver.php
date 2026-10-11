@@ -88,9 +88,12 @@ final class GdDriver implements Driver
             return null;
         }
 
-        $image = imagecreatetruecolor($raster->width(), $raster->height());
+        $image = self::canvas($raster->width(), $raster->height());
+        $alphas = $raster->alphas();
         foreach ($raster->pixels() as $i => $pixel) {
-            imagesetpixel($image, $i % $raster->width(), intdiv($i, $raster->width()), $pixel);
+            // GD's alpha runs the other way, 0 (opaque) to 127 (transparent).
+            $gdAlpha = $alphas === null ? 0 : 127 - ($alphas[$i] >> 1);
+            imagesetpixel($image, $i % $raster->width(), intdiv($i, $raster->width()), ($gdAlpha << 24) | $pixel);
         }
 
         ob_start();
@@ -132,8 +135,7 @@ final class GdDriver implements Driver
      * Shrinks the decoded source to at most WORKING_LONG_EDGE so that every
      * later sample - a strategy may take several - resamples a few thousand
      * pixels instead of the full bitmap, and so the full bitmap can be freed
-     * immediately. Composites alpha onto black along the way, because the
-     * destination is an opaque truecolour canvas.
+     * immediately. Keeps alpha - see canvas().
      *
      * @param \GdImage|resource $source
      * @return \GdImage|resource
@@ -144,9 +146,31 @@ final class GdDriver implements Driver
         $targetWidth = max(1, (int) round($width * $scale));
         $targetHeight = max(1, (int) round($height * $scale));
 
-        $copy = imagecreatetruecolor($targetWidth, $targetHeight);
+        $copy = self::canvas($targetWidth, $targetHeight);
         imagecopyresampled($copy, $source, 0, 0, 0, 0, $targetWidth, $targetHeight, $width, $height);
 
         return $copy;
+    }
+
+    /**
+     * A truecolour image that receives alpha instead of blending onto itself.
+     *
+     * With blending on (GD's default), imagecopyresampled() composites a
+     * transparent source onto the canvas's black, which is how a logo used to
+     * become a black placeholder. With it off, measured: GD weights each
+     * colour by its alpha and averages the alpha separately - a red pixel next
+     * to a transparent blue one resamples to red at half alpha, not purple. An
+     * opaque source resamples exactly as before.
+     *
+     * @return \GdImage|resource
+     * @internal
+     */
+    public static function canvas(int $width, int $height)
+    {
+        $canvas = imagecreatetruecolor($width, $height);
+        imagealphablending($canvas, false);
+        imagesavealpha($canvas, true);
+
+        return $canvas;
     }
 }

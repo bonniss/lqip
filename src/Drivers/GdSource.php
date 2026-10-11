@@ -11,7 +11,7 @@ final class GdSource extends OrientedImage
     private $working;
 
     /**
-     * @param \GdImage|resource $working Opaque truecolour working copy, owned from here on.
+     * @param \GdImage|resource $working Truecolour working copy, alpha kept, owned from here on.
      */
     public function __construct($working, int $storedWidth, int $storedHeight, int $orientation)
     {
@@ -21,7 +21,7 @@ final class GdSource extends OrientedImage
 
     protected function sampleStored(int $width, int $height): Raster
     {
-        $sample = imagecreatetruecolor($width, $height);
+        $sample = GdDriver::canvas($width, $height);
         imagecopyresampled(
             $sample,
             $this->working,
@@ -30,17 +30,19 @@ final class GdSource extends OrientedImage
             imagesx($this->working), imagesy($this->working)
         );
 
-        $pixels = [];
+        $pixels = $alphas = [];
         for ($y = 0; $y < $height; $y++) {
             for ($x = 0; $x < $width; $x++) {
-                // A truecolour pixel carries alpha in bits 24-30; the canvas is
-                // opaque, but masking keeps the contract explicit.
-                $pixels[] = imagecolorat($sample, $x, $y) & 0xFFFFFF;
+                // A truecolour pixel carries GD's 7-bit alpha in bits 24-30,
+                // 0 opaque to 127 transparent; Raster wants 0-255 the other way.
+                $pixel = imagecolorat($sample, $x, $y);
+                $pixels[] = $pixel & 0xFFFFFF;
+                $alphas[] = (int) round((127 - (($pixel >> 24) & 0x7F)) * 255 / 127);
             }
         }
         GdDriver::destroy($sample);
 
-        return new Raster($width, $height, $pixels);
+        return new Raster($width, $height, $pixels, $alphas);
     }
 
     public function release(): void

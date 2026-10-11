@@ -42,6 +42,22 @@ final class Fixtures
         return self::png($image);
     }
 
+    /**
+     * A stand-in for a logo: left half opaque $rgb, right half fully
+     * transparent - with blue as its (meaningless) colour, so a result that
+     * lets transparent colour bleed in shows it.
+     */
+    public static function logoPng(int $rgb, int $w = 16, int $h = 16): string
+    {
+        $image = imagecreatetruecolor($w, $h);
+        imagealphablending($image, false);
+        imagesavealpha($image, true);
+        imagefilledrectangle($image, 0, 0, intdiv($w, 2) - 1, $h - 1, $rgb);
+        imagefilledrectangle($image, intdiv($w, 2), 0, $w - 1, $h - 1, imagecolorallocatealpha($image, 0, 0, 0xFF, 127));
+
+        return self::png($image);
+    }
+
     /** Left half one colour, right half another. */
     public static function splitJpeg(int $left, int $right, int $w, int $h): string
     {
