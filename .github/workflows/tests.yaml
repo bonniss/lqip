@@ -2,7 +2,7 @@ name: tests
 
 on:
   push:
-    branches: [master, main]
+    branches: [main]
   pull_request:
 
 jobs:
@@ -12,11 +12,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # composer.json declares ^8.0; the suite has only ever been run on 8.2
-        # locally, so the lower and upper bounds are the point of this matrix.
-        php: ['8.0', '8.1', '8.2', '8.3']
+        php: ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5']
+        # gd alone is what most shared hosting has. With imagick loaded, `auto`
+        # resolves to it, so the same suite then exercises the other engine, and
+        # the driver contract tests stop skipping it.
+        extensions: ['gd', 'gd, imagick']
 
-    name: PHP ${{ matrix.php }}
+    name: PHP ${{ matrix.php }} (${{ matrix.extensions }})
 
     steps:
       - uses: actions/checkout@v4
@@ -25,15 +27,14 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          # gd is required, not optional. The runner's build includes WebP, which
-          # matters: without it the blur mode silently falls back to JPEG and the
-          # size assertions would be exercising a different code path than the one
-          # the defaults describe.
-          extensions: gd
+          # The runner's GD includes WebP, which matters: without it the blur mode
+          # silently falls back to JPEG and the size assertions would exercise a
+          # different code path than the one the defaults describe.
+          extensions: ${{ matrix.extensions }}
           coverage: none
 
-      - name: Report GD capabilities
-        run: php -r 'var_dump(gd_info());'
+      - name: Report engine capabilities
+        run: php -r 'var_dump(gd_info()); if (extension_loaded("imagick")) { var_dump(Imagick::getVersion(), Imagick::queryFormats("WEBP")); }'
 
       - name: Validate composer.json
         run: composer validate --strict
