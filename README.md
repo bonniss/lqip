@@ -1,68 +1,129 @@
 # bonniss26/lqip
 
 [![tests](https://github.com/bonniss/lqip/actions/workflows/tests.yaml/badge.svg)](https://github.com/bonniss/lqip/actions/workflows/tests.yaml)
+[![Packagist](https://img.shields.io/packagist/v/bonniss26/lqip)](https://packagist.org/packages/bonniss26/lqip)
 
-Framework-agnostic PHP library that generates a low-quality image placeholder
-(LQIP) for a single image - a small value you can drop straight into a CSS
-`background-image`, shown while the real photo is still loading.
+Show something in the right colours while a photo is still loading.
 
-No framework, no database, no config system, no runtime dependencies: you
-call a static method with raw bytes or a file path, you get a string back.
-Runs on PHP 7.4 through 8.5, on GD or Imagick - whichever the server has.
-Caching, settings UI and framework glue belong in an adapter; see
-[Framework integration](#framework-integration).
+Give this library an image and it returns a tiny CSS value, a low-quality
+image placeholder (LQIP), that you put in `background-image`. The visitor sees
+a colour, a gradient or a blurred preview instead of an empty box.
 
-## Install
+![The four modes on four photos](https://raw.githubusercontent.com/bonniss/lqip/main/docs/images/modes.jpg)
+
+- **Plain PHP, any framework.** One static call, a string back. No config,
+  no database, no runtime dependencies.
+- **PHP 7.4 to 8.5**, on GD or Imagick, whichever your server has.
+- **Never breaks your page.** A missing or broken image returns `null`. It
+  never throws an exception or emits a PHP warning.
+
+Using Winter CMS? Install
+[`bonniss26/wn-imagery-plugin`](https://github.com/bonniss/wn-imagery-plugin)
+instead. It wraps this library with Twig filters, caching and a settings page.
+
+## Contents
+
+- [Quick start](#quick-start)
+- [Choosing a mode](#choosing-a-mode)
+- [Usage](#usage): [Laravel](#laravel), [options](#options), [failures](#when-something-goes-wrong), [CSP](#content-security-policy)
+- [GD or Imagick](#gd-or-imagick)
+- [For developers](#for-developers): [how it works](#how-it-works), [measurements](#measurements), [extending](#extending), [contributing](#contributing)
+
+## Quick start
 
 ```bash
 composer require bonniss26/lqip
 ```
 
-Until the package is listed on Packagist, point Composer at the GitHub
-repository first:
+```php
+use Bonniss26\Lqip\PlaceholderGenerator;
 
-```bash
-composer config repositories.lqip vcs https://github.com/bonniss/lqip
-composer require bonniss26/lqip:^0.2
+$placeholder = PlaceholderGenerator::forFile('/path/to/photo.jpg');
+// "linear-gradient(#b5b2a5,#b5b2a5)"
 ```
 
-Needs `ext-gd` or `ext-imagick`, or both - see [Drivers](#drivers).
+```html
+<img src="photo.jpg" style="background-image: linear-gradient(#b5b2a5,#b5b2a5)">
+```
+
+The placeholder shows behind the `<img>` until the photo has loaded and
+covers it. For a CSS background photo, layer the two: the photo paints over
+the placeholder once it arrives.
+
+```css
+background-image: url(photo.jpg), linear-gradient(#b5b2a5,#b5b2a5);
+```
+
+> **Cache the result.** Generating a placeholder decodes the whole photo, at
+> about 20 ms per megapixel with GD. Do it once per image, when it is uploaded
+> or on first use, and store the string. Never generate one on every page view.
+
+## Choosing a mode
+
+Pass `['mode' => ...]` as the second argument. The picture at the top shows
+all four on real photos.
+
+| Mode | Looks like | Size | Use it when |
+|---|---|---|---|
+| `dominant_color` *(default)* | One flat colour | ~32 chars | You want the cheapest thing that works everywhere |
+| `blur` | A blurred thumbnail | ~130 chars | You want it to look like the photo. Best choice for most sites |
+| `gradient` | Four soft colour patches | ~256 chars | Your PHP cannot encode WebP (see below) |
+| `css_only` | Colour plus coarse light/dark layout | ~13 chars | Experimental. Read the caveats first |
+
+**`dominant_color`** picks the colour that covers the most of the image. It
+does not average, so a blue sofa in a white room comes out white, not
+grey-blue. It has no sense of shape. On a photo with a dark background, like
+the parrot above, you get the background.
+
+**`blur`** is a 16 px thumbnail, blurred and encoded as a WebP data URI. The
+browser scales it up smoothly, so it reads as an out-of-focus version of the
+photo. It costs about four times the characters of `dominant_color`, which is
+still less than one line of CSS. If your GD or Imagick has no WebP support it
+falls back to JPEG, which is about **9× larger** (~1 KB per image). On such a
+server use `gradient` instead. Check with:
+
+```php
+PlaceholderGenerator::resolveDriver()->supportsFormat('webp'); // true / false
+```
+
+**`gradient`** samples a 2×2 grid and paints four radial gradients. There is
+no image data, only CSS colours. Where WebP works, `blur` is both smaller and
+better, so `gradient` mainly exists for servers without WebP.
+
+**`css_only`** *(experimental)* packs the whole placeholder into one integer,
+`--lqip:87524`, which a stylesheet expands into gradients. The format is
+[Lean Rada's][lqip-note]. It is tiny, but:
+
+- **You supply the decode stylesheet.** This package does not ship one yet.
+  The column in the picture above is an approximate rendering.
+- It needs mid-2024 browsers (CSS `round()`, `mod()`, `oklab()`). Older ones
+  show **nothing at all**, not even a flat colour.
+- It is very coarse. On evenly lit photos about half the time the layout
+  vanishes and only one colour is left. Near-grey images can come out tinted,
+  because the format deliberately avoids plain grey.
+
+Unless you are excited about the format, `dominant_color` at 32 characters is
+the safer small option.
+
+[lqip-note]: https://leanrada.com/notes/css-only-lqip/
 
 ## Usage
 
 ```php
 use Bonniss26\Lqip\PlaceholderGenerator;
 
-$placeholder = PlaceholderGenerator::forFile('/path/to/photo.jpg');
-// "linear-gradient(#7c6a54,#7c6a54)"
-
-$placeholder = PlaceholderGenerator::forBytes($binaryImageData, [
-    'mode' => 'blur', // dominant_color | gradient | blur | css_only
-]);
-// "url('data:image/webp;base64,...')"
+PlaceholderGenerator::forFile('/path/to/photo.jpg');                 // from a file
+PlaceholderGenerator::forBytes($imageBytes, ['mode' => 'blur']);     // from bytes, e.g. S3
+// "url('data:image/webp;base64,UklGRkYAAABXRUJQVlA4IDoAAADwAQCd...')"
 ```
 
-`dominant_color`, `gradient` and `blur` all return a value valid inside a
-`background-image` list, so you can use it alone:
-
-```css
-background-image: linear-gradient(#7c6a54,#7c6a54);
-```
-
-or layer it behind the real photo once that's also a CSS background:
-
-```css
-background-image: url(realPhoto.jpg), linear-gradient(#7c6a54,#7c6a54);
-```
-
-Generation decodes the source image, so it costs real time - with GD roughly
-21 ms per source megapixel. **Cache the result**; never generate it on every
-request.
+Both return a string that is valid inside a CSS `background-image` list, or
+`null`.
 
 ### Laravel
 
-No service provider is needed. Call it like any helper and let Laravel's
-cache hold the result:
+No service provider is needed. Call it from a helper and let Laravel's cache
+hold the result:
 
 ```php
 use Bonniss26\Lqip\PlaceholderGenerator;
@@ -85,59 +146,168 @@ function lqip(string $path): string
 <img src="{{ Storage::url($photo) }}" style="background-image: {{ lqip($photo) }}">
 ```
 
-### Return values and failure
+For many images per page, generate in a queued job after upload rather than
+inside the request.
 
-`forFile()`/`forBytes()` return that CSS string, or `null` if the image can't
-be read or decoded, is larger than 60 megapixels, or no image engine is
-available. **Nothing throws and nothing emits a PHP warning**, because the
-usual caller is a template, where an exception takes down the whole page.
+### Options
 
-The one exception is a caller mistake, not an image problem: the experimental
-`css_only` mode produces a bare integer for a CSS custom property, not a
-`background-image` value, and asking the methods above for it throws
-`NotCssRepresentable`. Use the `resultFor*()` siblings, which return an
-`LqipResult` that also tells you what kind of value it is:
+| Option      | Default          | Applies to | Meaning |
+|-------------|------------------|------------|---------|
+| `mode`      | `dominant_color` | all        | `dominant_color`, `gradient`, `blur`, `css_only`, or [your own](#extending) |
+| `driver`    | `auto`           | all        | `auto`, `gd`, `imagick`. See [GD or Imagick](#gd-or-imagick) |
+| `long_edge` | `16`             | `blur`     | Longest edge of the thumbnail in px (1-64). Bigger is sharper and longer |
+| `quality`   | `25`             | `blur`     | Encode quality (0-100) |
+| `blur`      | `true`           | `blur`     | Blur the thumbnail before encoding |
+| `format`    | `webp`           | `blur`     | `webp` or `jpg`. Falls back to `jpg` without WebP support |
+
+Out-of-range numbers are clamped. An unknown `mode` or `driver` returns
+`null`.
+
+### When something goes wrong
+
+`forFile()` and `forBytes()` return `null` when:
+
+- the image is missing, unreadable or broken;
+- it is larger than 60 megapixels;
+- neither GD nor Imagick is installed.
+
+Nothing throws, and nothing emits a PHP warning. Frameworks often turn a
+warning into an error page, and placeholders are usually rendered inside
+templates.
+
+The single exception is a programming mistake. `css_only` returns a CSS
+custom property, not a `background-image` value, so asking `forFile()` for it
+throws `NotCssRepresentable`. Use `resultForFile()` / `resultForBytes()`,
+which work with every mode and tell you what you got:
 
 ```php
 $result = PlaceholderGenerator::resultForFile('/path/to/photo.jpg', ['mode' => 'css_only']);
 
-$result->kind();             // "css_var"
-$result->value();            // "192900"
-$result->cssProperty();      // "--lqip"
-$result->toCss();            // null - not usable as a background-image
-$result->toStyleAttribute(); // "--lqip:192900"
+$result->kind();             // "css_var" (the other modes give "css")
+$result->value();            // "87524"
+$result->toCss();            // null: not usable as a background-image
+$result->toStyleAttribute(); // "--lqip:87524"
 ```
 
-`resultFor*()` works for every mode; for the three CSS ones `toCss()` returns
-exactly what `forFile()`/`forBytes()` would have.
+For the other modes `toStyleAttribute()` gives
+`background-image:linear-gradient(#b5b2a5,#b5b2a5)`.
 
 ### Content-Security-Policy
 
-`blur` emits a `data:` URI, so a site with a strict CSP needs `img-src data:`
-(which covers CSS `background-image` too). Without it the placeholder silently
-fails to render, with no console error pointing at this library.
-`dominant_color`, `gradient` and `css_only` emit no `data:` URIs.
+`blur` produces a `data:` URI, so a site with a strict CSP needs
+`img-src data:`. Without it the placeholder is silently not shown. The other
+modes are plain CSS colours.
 
-### Options
+## GD or Imagick
 
-| Option      | Default          | Applies to | Meaning                                   |
-|-------------|------------------|------------|--------------------------------------------|
-| `mode`      | `dominant_color` | all        | `dominant_color` \| `gradient` \| `blur` \| `css_only`, or a mode added with `extend()` |
-| `driver`    | `auto`           | all        | `auto` \| `gd` \| `imagick`, or a `Drivers\Driver` instance |
-| `long_edge` | `16`             | `blur`     | Longest edge, in px, of the miniature (1-64) |
-| `quality`   | `25`             | `blur`     | Lossy encode quality (0-100)               |
-| `blur`      | `true`           | `blur`     | Apply a Gaussian blur before encoding      |
-| `format`    | `webp`           | `blur`     | `webp` \| `jpg` (falls back to jpg without WebP support) |
+You need one of `ext-gd` or `ext-imagick`. Almost every PHP host has GD.
 
-Out-of-range numbers are clamped. An unknown `mode` or `driver` returns
-`null` without decoding anything.
+| Driver | Speed on large JPEGs | Notes |
+|---|---|---|
+| `gd` | ~20 ms per megapixel | Everywhere |
+| `imagick` | ~5.5 ms per megapixel, **~3.5× faster** | Decodes JPEGs at reduced size |
 
-### Extending with a custom strategy
+The default `auto` uses Imagick when it is installed and GD otherwise. Both
+give the same placeholder, give or take a shade, so switching does not
+invalidate anything you have cached. To pin one:
 
-Each mode is a class implementing `Bonniss26\Lqip\Strategies\LqipStrategy`.
-It receives the decoded image and samples it as a small array of pixels in
-plain PHP, so it never touches GD or Imagick directly and works on both.
-Register your own (or override a built-in one) with `extend()`:
+```php
+use Bonniss26\Lqip\Drivers\GdDriver;
+
+PlaceholderGenerator::forFile($path, ['driver' => 'gd']);   // per call
+PlaceholderGenerator::useDriver(new GdDriver());            // process-wide
+PlaceholderGenerator::availableDrivers();                   // ['imagick', 'gd']
+```
+
+Phone photos are rotated according to their EXIF orientation with either
+driver, so a portrait photo gets a portrait placeholder.
+
+## Requirements
+
+- PHP 7.4 - 8.5
+- `ext-gd` or `ext-imagick`, ideally with WebP support
+
+---
+
+## For developers
+
+The rest of this page is for people who want to know how it works or want to
+change it.
+
+### How it works
+
+```text
+bytes ──► Driver: decode, shrink to a 256 px working copy
+              │
+              ▼
+          Image::sample(w, h) ──► Raster (a few dozen pixels, a PHP int array)
+              │
+              ▼
+          Strategy (one per mode, plain PHP) ──► LqipResult
+              │
+              └─ blur only: Driver::encode(Raster) ──► WebP/JPEG bytes
+```
+
+- **Drivers** (`src/Drivers/`) do only what needs an image engine: decode,
+  shrink, sample to a `Support\Raster`, and encode. `GdDriver` shrinks with
+  one resample after a full decode. `ImagickDriver` asks libjpeg to decode at
+  1/2-1/8 scale (`jpeg:size`), which is where its speed comes from. It also
+  only accepts formats PHP has sniffed as JPEG, PNG, GIF, WebP, BMP or AVIF,
+  so ImageMagick's external delegates (PostScript, SVG, MSL) are unreachable.
+- **Strategies** (`src/Strategies/`, one class per mode) work on the
+  `Raster` in plain PHP and never touch GD or Imagick. That is why both
+  engines agree, why strategies are testable without an engine, and why a
+  third engine would be one new class.
+- **`Support\GaussianBlur`** reproduces GD's `IMG_FILTER_GAUSSIAN_BLUR` bit
+  for bit. The test suite checks it against `imagefilter()`.
+- **`Support\DominantColor`** is its own quantizer: median cut, then k-means,
+  then merging clusters closer than 40 RGB units, then counting pixels. GD's
+  quantizer gives different results on different libgd builds and Imagick's
+  is a third algorithm, so neither could be shared. The docblock records the
+  measurements behind each step.
+- **`Support\ExifOrientation`** reads the orientation tag from JPEG bytes
+  without `ext-exif`. It is applied to the tiny sample, not the full image.
+- **`Support\LqipInteger` / `Support\Oklab`** are the `css_only` codec,
+  verified against the format's published reference value.
+
+### Measurements
+
+The defaults come from measurements, not guesses. 40 photographs, 16 px long
+edge, length of the value actually sent; RMSE is against the source on a
+16×16 grid (0-255, lower is closer):
+
+| Mode / variant | Chars | RMSE |
+|---|---|---|
+| `dominant_color` | 32 | 56.3 |
+| `blur` WebP q25 *(default)* | 131 | 28.3 |
+| `blur` WebP q50 | 138 | 27.3 |
+| `blur` JPEG q50 | 998 | — |
+| `blur` AVIF q50 | 478 | — |
+| `gradient` | 256 | — |
+| `css_only` | 13 | — |
+
+- AVIF is 4× larger than WebP at this size and 280× slower to encode, so it
+  is not offered.
+- Blur passes matter more than `quality`: 0/1/2/3 passes give 125/93/84/79
+  bytes. Two passes keep the overall layout (2×2 RMSE 3.2 against 3.0
+  unblurred).
+- Cost is linear in source megapixels because decoding dominates. Imagick
+  against GD on 37 photos (median 20 MP, PHP 8.3): 5.5 against 19.5 ms/MP.
+- GD and Imagick agree to within 1.7 RGB units on `gradient`. On
+  `dominant_color` they agree to a median of 1.4. About 10% of photos have
+  two colour groups of nearly equal size, and there the two engines can pick
+  different winners.
+
+Run the benchmark on your own photos:
+
+```bash
+php bench/compare-drivers.php /path/to/photos [mode]
+```
+
+### Extending
+
+Each mode is a class implementing `Strategies\LqipStrategy`. Register your own,
+or replace a built-in one, with `extend()`:
 
 ```php
 use Bonniss26\Lqip\Drivers\Driver;
@@ -160,122 +330,65 @@ PlaceholderGenerator::extend('average', new AverageColour());
 PlaceholderGenerator::forFile('/path/to/photo.jpg', ['mode' => 'average']);
 ```
 
-`PlaceholderGenerator::modes()` lists every mode, built-in and registered.
+`PlaceholderGenerator::modes()` lists every mode. A custom engine implements
+`Drivers\Driver` and `Drivers\Image` and is installed with `useDriver()`.
 
-## Drivers
+### Contributing
 
-| Driver    | Needs         | Notes |
-|-----------|---------------|-------|
-| `gd`      | `ext-gd`      | Present on nearly every PHP host. Decodes the full bitmap, so cost and memory grow with source megapixels. |
-| `imagick` | `ext-imagick` | Decodes JPEG directly at 1/2-1/8 scale, so large photos are much cheaper. Preferred by `auto` when loaded. |
+```bash
+git clone https://github.com/bonniss/lqip && cd lqip
+composer install
+vendor/bin/phpunit
+```
 
-The default `auto` takes Imagick when it is loaded and GD otherwise. Pin one
-with the `driver` option, or process-wide with
-`PlaceholderGenerator::useDriver()`, which also accepts your own
-`Drivers\Driver` implementation. `PlaceholderGenerator::availableDrivers()`
-reports which engines this PHP can use.
+The test images are generated in code, so there are no binary fixtures.
+Tests for a driver whose extension is missing are skipped. To run them all,
+use Docker:
 
-Both engines produce the same placeholder within resampling differences,
-because only decoding, shrinking and encoding happen in the engine. Blurring,
-colour quantization and cell averaging are done in PHP on a tiny pixel array.
-EXIF orientation is applied either way, so a portrait phone photo gets a
-portrait placeholder.
+```bash
+docker run --rm -v "$PWD":/app -w /app php:8.3-cli sh -c \
+  "curl -sSL https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions -o /usr/local/bin/install-php-extensions \
+   && chmod +x /usr/local/bin/install-php-extensions && install-php-extensions gd imagick \
+   && vendor/bin/phpunit"
+```
 
-The Imagick driver only ever hands ImageMagick JPEG, PNG, GIF, WebP, BMP or
-AVIF bytes, after PHP has sniffed the format itself: ImageMagick would
-otherwise route SVG, PostScript and similar formats to external programs.
+CI runs every PHP version from 7.4 to 8.5, with GD and with GD + Imagick.
 
-## The modes
+Ground rules that pull requests are held to:
 
-Sizes below are medians measured over 40 photos, counted as characters of the
-value actually sent over the wire.
+- **Never throw and never warn**, except `NotCssRepresentable`. A broken image
+  is `null`. A call that can warn (decoding, `ini_set`, file access) gets an
+  `@` *and* a checked return value; anything that can throw is caught.
+- **PHP 7.4 syntax.** No constructor promotion, union types, `mixed`, `match`
+  or named arguments.
+- **No runtime dependencies**, and no new required extension.
+- **Measure before claiming** a size, speed or quality improvement. Run
+  `bench/compare-drivers.php`, and say what you measured in the pull request.
+- Every change keeps `vendor/bin/phpunit` green. Behaviour changes come with
+  tests that show why.
+- One logical change per commit. The commit message says why, not only what.
 
-| Mode | Size | Needs | Notes |
-|---|---|---|---|
-| `dominant_color` | 32 | — | Default |
-| `gradient` | 256 | — | Only worth it without WebP |
-| `blur` | 131 | `img-src data:` | Best fidelity |
-| `css_only` | 13 | A stylesheet, 2024+ browsers | Experimental |
+If you change what a mode outputs, regenerate the picture at the top
+(`docs/render-examples.php` describes how).
 
-- **`dominant_color`** (default) - a single flat tone, quantized down to a
-  handful of colours with a median cut and picking the most-used one (not a
-  naive average, which tends to muddy distinct colours into grey/brown).
-  Cheapest by far, no sense of shape.
-- **`gradient`** - four CSS `radial-gradient()`s sampled from a 2x2 grid.
-  Where WebP is available this is dominated by `blur`: it is nearly twice the
-  size (256 characters against 131) and samples only four points, so it
-  carries strictly less information than a 16px thumbnail. Its real niche is
-  hosts without WebP, where `blur` gets expensive - see below.
-- **`blur`** - a blurred raster miniature, base64-encoded as a data URI. Most
-  realistic, and at the default 16px/quality-25 still only ~131 characters.
-  **Without WebP support this falls back to JPEG, which costs roughly 9x
-  more** - about 725 bytes raw, near 1KB once base64-encoded, against 73 bytes
-  for WebP. At 16px a JPEG is almost entirely header. On such a host prefer
-  `gradient` or `dominant_color`; check with
-  `PlaceholderGenerator::resolveDriver()->supportsFormat('webp')`.
-- **`css_only`** - **experimental.** The whole placeholder as one integer
-  (`--lqip:192900`), expanded into gradients entirely by CSS. Around 13
-  characters per image and no image bytes at all, but the trade is steep:
-  - it needs a decode stylesheet the site ships once, which this package does
-    not currently provide - see [the format's original write-up][lqip-note];
-  - it needs CSS `round()`, `mod()`, `oklab()` and relative color syntax, so
-    Chrome 125+, Firefox 118+, Safari 15.4-16.4 depending on the feature - in
-    practice mid-2024 onward;
-  - there is **no graceful fallback.** In an unsupporting browser, `var()`
-    substitution of an unknown function invalidates the whole
-    `background-image` declaration at computed-value time, so nothing renders
-    at all - not even a solid color;
-  - it is very coarse. A cell only changes bucket when its Oklab lightness
-    differs from the base color by more than 1/3, so on evenly-lit
-    photography it often degenerates to a flat tone. Measured on 25 interior
-    and architecture photos, about half produced six identical cells. Compare
-    against `dominant_color`, which costs 32 characters and works everywhere,
-    before choosing it.
+Ideas on the roadmap: a `css_only` decode stylesheet (it must be written
+independently, because the reference one has no licence), a `thumbhash`
+mode, and an option to skip transparent images. See
+[CHANGELOG.md](CHANGELOG.md) for what changed between versions.
 
-  It also deviates from the reference implementation in two documented ways:
-  no sharpening pass (libvips' operator has no GD equivalent, and a 3x3
-  convolution on a 3x2 image would be a different operation rather than an
-  approximation), and images with transparency still get a placeholder
-  instead of being skipped.
+## Non-goals
 
-[lqip-note]: https://leanrada.com/notes/css-only-lqip/
-
-## Requirements
-
-- PHP 7.4 - 8.5
-- `ext-gd` or `ext-imagick`. WebP support in the engine is optional but
-  strongly recommended for the `blur` mode.
-
-## Non-goals (for this package)
-
-- Caching / persistence - the caller decides what "cached by path" means for
-  their storage.
-- Settings/config UI - pass options per call.
-- Video posters, animated GIFs (the first frame is used), PDF/print.
-- BlurHash/ThumbHash encodings - not implemented here; candidates for a future
-  strategy, and both need a client-side JS decoder, which none of the current
-  modes do.
-- Shipping the `css_only` decode stylesheet - the mode generates the value,
-  the consuming site supplies the CSS.
-
-## Framework integration
-
-This package is the core: give it an image, get a string back. Caching,
-configuration and template helpers belong in an adapter for whatever framework
-you use.
-
-- **WinterCMS:** [`bonniss26/wn-imagery-plugin`](https://github.com/bonniss/wn-imagery-plugin)
-  adds `|lqip` and `|lqipStyle` Twig filters, a backend settings page,
-  database caching with failure backoff, queued generation and
-  `imagery:warm` / `imagery:purge` commands.
-- **Laravel:** see [the example above](#laravel).
+- Caching or persistence. Your app knows its storage.
+- A settings UI. Pass options per call, or use a framework plugin.
+- Animated images (the first frame is used), video posters, PDFs.
 
 ## Credits
 
-The `css_only` mode implements the placeholder format designed by Lean Rada,
-described at [leanrada.com/notes/css-only-lqip](https://leanrada.com/notes/css-only-lqip/).
-The colour space maths is Björn Ottosson's
-[Oklab](https://bottosson.github.io/posts/oklab/).
+- The `css_only` format is Lean Rada's, from
+  [leanrada.com/notes/css-only-lqip](https://leanrada.com/notes/css-only-lqip/).
+- The colour maths is Björn Ottosson's [Oklab](https://bottosson.github.io/posts/oklab/).
+- The example photos are CC0, from Wikimedia Commons. See
+  [docs/images/source/SOURCES.md](docs/images/source/SOURCES.md).
 
 ## License
 

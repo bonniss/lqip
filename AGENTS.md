@@ -65,6 +65,11 @@ Done:
   `tests/Drivers/DriverContractTest` runs against every driver and skips one
   whose engine is missing; run it under Docker (`php:*-cli` +
   `install-php-extensions gd imagick`) to exercise Imagick locally.
+- `docs/render-examples.php` — renders the README's mode comparison picture
+  (`docs/images/modes.jpg`) from CC0 photos in `docs/images/source/`. Rerun it
+  when a mode's output changes. The README is user-facing first; its "For
+  developers" section carries a short copy of the measurements below, so keep
+  the two in step.
 - `bench/compare-drivers.php <folder> [mode]` — timings and cross-driver
   agreement on real photos.
 - MIT license, `composer.json`, README, CHANGELOG, CI.
@@ -128,7 +133,7 @@ Not done (roadmap, in rough priority order):
   is most of GD's cost after decoding. A cheaper pre-shrink (e.g. a
   nearest-neighbour pass to ~4× the working size first) would need measuring
   for both speed and output drift before adopting.
-- Packagist registration (needs the owner's account).
+
 
 ## Working practices
 
