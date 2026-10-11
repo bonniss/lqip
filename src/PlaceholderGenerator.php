@@ -78,6 +78,9 @@ class PlaceholderGenerator
         'quality' => 25,
         'blur' => true,
         'format' => 'webp', // webp | jpg
+        // blur only: wrap the miniature in an SVG that blurs it again at display
+        // size, hiding the blocks a browser's enlargement of 16px leaves.
+        'smooth' => false,
         // auto | gd | imagick, or a Drivers\Driver instance. `auto` takes Imagick
         // when it is loaded, for its reduced-size JPEG decoding, and GD otherwise.
         'driver' => 'auto',
@@ -314,6 +317,7 @@ class PlaceholderGenerator
         $options['quality'] = max(self::MIN_QUALITY, min(self::MAX_QUALITY, (int) $options['quality']));
         $options['long_edge'] = max(self::MIN_LONG_EDGE, min(self::MAX_LONG_EDGE, (int) $options['long_edge']));
         $options['blur'] = (bool) $options['blur'];
+        $options['smooth'] = (bool) $options['smooth'];
 
         return $options;
     }

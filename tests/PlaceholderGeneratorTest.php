@@ -385,6 +385,45 @@ class PlaceholderGeneratorTest extends TestCase
         $this->assertNull(PlaceholderGenerator::resultForBytes('not an image'));
     }
 
+    public function testSmoothWrapsTheMiniatureInABlurringSvg(): void
+    {
+        $css = PlaceholderGenerator::forBytes(
+            Fixtures::splitJpeg(0xFF0000, 0x0000FF, 64, 48),
+            ['mode' => 'blur', 'smooth' => true, 'format' => 'jpg']
+        );
+
+        $this->assertStringStartsWith("url('data:image/svg+xml,", $css);
+        // Safe inside url('...') and inside a double-quoted style attribute.
+        $inner = substr($css, 5, -2);
+        $this->assertSame(0, preg_match('/[\'"<>#]/', $inner), $inner);
+
+        $svg = simplexml_load_string(rawurldecode(substr($inner, strlen('data:image/svg+xml,'))));
+        $this->assertNotFalse($svg, 'well-formed SVG');
+        $this->assertSame('0 0 16 12', (string) $svg['viewBox'], 'the miniature size');
+        $this->assertStringStartsWith('data:image/jpeg;base64,', (string) $svg->image['href']);
+        $this->assertSame(1, $svg->filter->feComponentTransfer->count(), 'opaque: edges kept opaque');
+    }
+
+    public function testSmoothLeavesATransparentImagesAlphaAlone(): void
+    {
+        $css = PlaceholderGenerator::forBytes(Fixtures::logoPng(0xFF0000, 32, 32), ['mode' => 'blur', 'smooth' => true]);
+        $svg = simplexml_load_string(rawurldecode(substr($css, strlen("url('data:image/svg+xml,"), -2)));
+
+        $this->assertSame(0, $svg->filter->feComponentTransfer->count());
+    }
+
+    public function testSmoothIsOffByDefaultAndOnlyAffectsBlur(): void
+    {
+        $png = Fixtures::solidPng(0x336699, 32, 32);
+
+        $this->assertStringStartsWith("url('data:image/", PlaceholderGenerator::forBytes($png, ['mode' => 'blur']));
+        $this->assertStringNotContainsString('svg', PlaceholderGenerator::forBytes($png, ['mode' => 'blur']));
+        $this->assertSame(
+            PlaceholderGenerator::forBytes($png, ['mode' => 'gradient']),
+            PlaceholderGenerator::forBytes($png, ['mode' => 'gradient', 'smooth' => true])
+        );
+    }
+
     /**
      * Stored 60x40 with Orientation 6, displayed 40x60 - the size a template
      * needs for width/height or aspect-ratio, and the one getimagesize() gets

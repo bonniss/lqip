@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrong way round for portrait phone photos. Attached to every result,
   custom strategies' included. `toStyleAttribute(['aspect_ratio' => true])`
   also reserves the shape (`aspect-ratio:1600/900`).
+- `smooth` option for `blur`: wraps the miniature in an SVG with a Gaussian
+  blur filter, the technique `next/image` uses, so the browser's enlargement
+  of a 16 px image no longer shows soft blocks. Costs ~530 characters against
+  ~130, so it is off by default.
 
 ### Fixed
 
