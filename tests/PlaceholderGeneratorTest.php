@@ -7,6 +7,7 @@ use Bonniss26\Lqip\LqipResult;
 use Bonniss26\Lqip\PlaceholderGenerator;
 use Bonniss26\Lqip\Strategies\LqipStrategy;
 use Bonniss26\Lqip\Support\LqipInteger;
+use Bonniss26\Lqip\Support\ThumbHash;
 use PHPUnit\Framework\TestCase;
 
 class PlaceholderGeneratorTest extends TestCase
@@ -383,6 +384,39 @@ class PlaceholderGeneratorTest extends TestCase
     public function testResultForBytesReturnsNullForGarbageInput(): void
     {
         $this->assertNull(PlaceholderGenerator::resultForBytes('not an image'));
+    }
+
+    public function testThumbhashReturnsABase64HashThatIsNotCss(): void
+    {
+        $png = Fixtures::solidPng(0xE04020, 60, 40);
+        $result = PlaceholderGenerator::resultForBytes($png, ['mode' => 'thumbhash']);
+
+        $this->assertSame(LqipResult::KIND_HASH, $result->kind());
+        $this->assertNull($result->toCss());
+        $this->assertSame('', $result->toStyleAttribute());
+        $this->assertSame([60, 40], [$result->width(), $result->height()]);
+        $this->assertContains('thumbhash', PlaceholderGenerator::modes());
+
+        $hash = base64_decode($result->value(), true);
+        $this->assertNotFalse($hash);
+        $this->assertGreaterThan(1.0, ThumbHash::aspectRatio($hash), 'landscape');
+        // Within ThumbHash's own quantization: the JS reference decodes this
+        // colour's hash to 220,62,32 as well.
+        foreach (ThumbHash::decode($hash)->channelsAt(16, 10) as $i => $channel) {
+            $this->assertEqualsWithDelta([0xE0, 0x40, 0x20][$i], $channel, 6, 'solid colour round-trips');
+        }
+
+        $this->expectException(NotCssRepresentable::class);
+        PlaceholderGenerator::forBytes($png, ['mode' => 'thumbhash']);
+    }
+
+    public function testThumbhashKeepsTransparency(): void
+    {
+        $hash = base64_decode(PlaceholderGenerator::resultForBytes(Fixtures::logoPng(0xFF0000, 32, 32), ['mode' => 'thumbhash'])->value());
+        $decoded = ThumbHash::decode($hash);
+
+        $this->assertGreaterThan(200, $decoded->alphaAt(2, 16), 'painted half');
+        $this->assertLessThan(60, $decoded->alphaAt(29, 16), 'transparent half');
     }
 
     public function testSmoothWrapsTheMiniatureInABlurringSvg(): void

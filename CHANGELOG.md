@@ -33,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   blur filter, the technique `next/image` uses, so the browser's enlargement
   of a 16 px image no longer shows soft blocks. Costs ~530 characters against
   ~130, so it is off by default.
+- `thumbhash` mode: a [ThumbHash](https://evanw.github.io/thumbhash/) as
+  base64, ~30 characters, for APIs and apps that decode it client-side. Keeps
+  transparency and the approximate aspect ratio. A port of the MIT reference
+  implementation, checked against it, with no new dependency. Returns a
+  result of the new kind `LqipResult::KIND_HASH`, which is not CSS:
+  `forFile()`/`forBytes()` throw `NotCssRepresentable` for it, and
+  `toStyleAttribute()` gives `''`. `Support\ThumbHash::decode()` renders a
+  hash back to pixels.
 
 ### Fixed
 

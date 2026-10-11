@@ -25,6 +25,12 @@ final class LqipResult
     const KIND_CSS_VAR = 'css_var';
 
     /**
+     * An encoded placeholder (e.g. a base64 ThumbHash) for a client-side
+     * decoder to turn into an image - not CSS at all. Meant for APIs and apps.
+     */
+    const KIND_HASH = 'hash';
+
+    /**
      * These strings are part of the wire format: the planned WinterCMS adapter
      * caches generated placeholders in a database alongside their kind. When the
      * PHP floor moves to 8.1 these should become a backed `enum LqipKind: string`
@@ -99,6 +105,11 @@ final class LqipResult
         return new self(self::KIND_CSS_VAR, $value, $property);
     }
 
+    public static function hash(string $value): self
+    {
+        return new self(self::KIND_HASH, $value, null);
+    }
+
     public function kind(): string
     {
         return $this->kind;
@@ -128,10 +139,11 @@ final class LqipResult
     }
 
     /**
-     * The declaration to put in a `style` attribute, for either kind. Saves every
-     * caller hand-concatenating it - which is where the custom property name
-     * would otherwise get mistyped, silently producing a placeholder that no
-     * stylesheet matches.
+     * The declaration to put in a `style` attribute, for either CSS kind. Saves
+     * every caller hand-concatenating it - which is where the custom property
+     * name would otherwise get mistyped, silently producing a placeholder that
+     * no stylesheet matches. A hash has no CSS form and gives '' (or only the
+     * aspect-ratio, when asked), so a template using this cannot break.
      *
      * A CSS value comes with `background-size:cover`. A background image is
      * drawn at its intrinsic size and repeated by default, so the blur mode's
@@ -149,12 +161,16 @@ final class LqipResult
      */
     public function toStyleAttribute(array $options = []): string
     {
-        $style = $this->kind === self::KIND_CSS_VAR
-            ? "{$this->property}:{$this->value}"
-            : "background-image:{$this->value};background-size:cover";
+        if ($this->kind === self::KIND_HASH) {
+            $style = ''; // a hash is for a client-side decoder; there is no CSS to give
+        } elseif ($this->kind === self::KIND_CSS_VAR) {
+            $style = "{$this->property}:{$this->value}";
+        } else {
+            $style = "background-image:{$this->value};background-size:cover";
+        }
 
         if (!empty($options['aspect_ratio']) && $this->width && $this->height) {
-            $style .= ";aspect-ratio:{$this->width}/{$this->height}";
+            $style .= ($style === '' ? '' : ';') . "aspect-ratio:{$this->width}/{$this->height}";
         }
 
         return $style;
