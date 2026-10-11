@@ -39,11 +39,54 @@ final class LqipResult
     /** @var string|null */
     private $property;
 
+    /** @var int|null */
+    private $width;
+
+    /** @var int|null */
+    private $height;
+
     private function __construct(string $kind, string $value, ?string $property)
     {
         $this->kind = $kind;
         $this->value = $value;
         $this->property = $property;
+    }
+
+    /**
+     * A copy carrying the source image's displayed size. PlaceholderGenerator
+     * attaches it to every result, so a strategy - built-in or custom - never
+     * has to.
+     */
+    public function withDimensions(int $width, int $height): self
+    {
+        $copy = clone $this;
+        $copy->width = $width;
+        $copy->height = $height;
+
+        return $copy;
+    }
+
+    /**
+     * Width of the source image as displayed, in pixels - after its EXIF
+     * orientation, so a portrait phone photo stored sideways reports its
+     * portrait width. getimagesize() reports the stored size and gets those
+     * the wrong way round. Null only for a result built by hand.
+     */
+    public function width(): ?int
+    {
+        return $this->width;
+    }
+
+    /** Height of the source image as displayed; see width(). */
+    public function height(): ?int
+    {
+        return $this->height;
+    }
+
+    /** Width divided by height, or null when the size is unknown. */
+    public function aspectRatio(): ?float
+    {
+        return $this->width && $this->height ? $this->width / $this->height : null;
     }
 
     public static function css(string $value): self
@@ -95,11 +138,25 @@ final class LqipResult
      * 16px miniature would otherwise tile across the element instead of
      * stretching over it. Gradients have no intrinsic size and fill the box
      * either way, so the declaration is harmless for every other mode.
+     *
+     * With ['aspect_ratio' => true] it also reserves the image's shape
+     * (`aspect-ratio:1600/900`), so an element without fixed dimensions has
+     * the right height before the photo arrives instead of jumping when it
+     * does. Left out by default because it changes layout, which a caller
+     * styling the element themselves may not want.
+     *
+     * @param array{aspect_ratio?:bool} $options
      */
-    public function toStyleAttribute(): string
+    public function toStyleAttribute(array $options = []): string
     {
-        return $this->kind === self::KIND_CSS_VAR
+        $style = $this->kind === self::KIND_CSS_VAR
             ? "{$this->property}:{$this->value}"
             : "background-image:{$this->value};background-size:cover";
+
+        if (!empty($options['aspect_ratio']) && $this->width && $this->height) {
+            $style .= ";aspect-ratio:{$this->width}/{$this->height}";
+        }
+
+        return $style;
     }
 }

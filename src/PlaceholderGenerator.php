@@ -259,7 +259,9 @@ class PlaceholderGenerator
                 $image = new FlattenedImage($image, $background);
             }
 
-            return $strategy->generate($image, $driver, $options);
+            $result = $strategy->generate($image, $driver, $options);
+
+            return $result ? $result->withDimensions($image->width(), $image->height()) : null;
         } catch (Throwable $e) {
             return null;
         } finally {

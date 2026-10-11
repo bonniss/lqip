@@ -29,6 +29,36 @@ class LqipResultTest extends TestCase
         $this->assertSame('--lqip:192900', $result->toStyleAttribute());
     }
 
+    public function testDimensionsAreAttachedToACopy(): void
+    {
+        $bare = LqipResult::css('linear-gradient(#abc,#abc)');
+        $sized = $bare->withDimensions(1600, 900);
+
+        $this->assertNull($bare->width(), 'the original is not modified');
+        $this->assertNull($bare->aspectRatio());
+        $this->assertSame(1600, $sized->width());
+        $this->assertSame(900, $sized->height());
+        $this->assertEqualsWithDelta(16 / 9, $sized->aspectRatio(), 1e-9);
+    }
+
+    public function testStyleAttributeReservesTheShapeOnlyWhenAsked(): void
+    {
+        $css = LqipResult::css('linear-gradient(#abc,#abc)')->withDimensions(1600, 900);
+        $var = LqipResult::cssVar('192900', '--lqip')->withDimensions(3, 4);
+
+        $this->assertStringNotContainsString('aspect-ratio', $css->toStyleAttribute());
+        $this->assertSame(
+            'background-image:linear-gradient(#abc,#abc);background-size:cover;aspect-ratio:1600/900',
+            $css->toStyleAttribute(['aspect_ratio' => true])
+        );
+        $this->assertSame('--lqip:192900;aspect-ratio:3/4', $var->toStyleAttribute(['aspect_ratio' => true]));
+        $this->assertSame(
+            '--lqip:192900',
+            LqipResult::cssVar('192900', '--lqip')->toStyleAttribute(['aspect_ratio' => true]),
+            'no size known, nothing to reserve'
+        );
+    }
+
     /**
      * Pins a deliberate omission. With __toString(), a css_var result would
      * silently interpolate into a background-image context and produce CSS that

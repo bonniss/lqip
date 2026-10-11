@@ -385,6 +385,39 @@ class PlaceholderGeneratorTest extends TestCase
         $this->assertNull(PlaceholderGenerator::resultForBytes('not an image'));
     }
 
+    /**
+     * Stored 60x40 with Orientation 6, displayed 40x60 - the size a template
+     * needs for width/height or aspect-ratio, and the one getimagesize() gets
+     * the wrong way round.
+     */
+    public function testResultsCarryTheDisplayedSize(): void
+    {
+        $jpeg = Fixtures::withExifOrientation(Fixtures::splitJpeg(0xFF0000, 0x0000FF, 60, 40), 6);
+
+        foreach (['dominant_color', 'gradient', 'blur', 'css_only'] as $mode) {
+            $result = PlaceholderGenerator::resultForBytes($jpeg, ['mode' => $mode]);
+
+            $this->assertSame(40, $result->width(), $mode);
+            $this->assertSame(60, $result->height(), $mode);
+        }
+
+        $this->assertSame([60, 40], array_slice(getimagesizefromstring($jpeg), 0, 2));
+    }
+
+    public function testACustomStrategysResultGetsTheSizeToo(): void
+    {
+        PlaceholderGenerator::extend(__FUNCTION__, new class implements LqipStrategy {
+            public function generate(Image $image, Driver $driver, array $options): ?LqipResult
+            {
+                return LqipResult::css('none');
+            }
+        });
+
+        $result = PlaceholderGenerator::resultForBytes(Fixtures::solidPng(0x336699, 30, 20), ['mode' => __FUNCTION__]);
+
+        $this->assertSame([30, 20], [$result->width(), $result->height()]);
+    }
+
     public function testForBytesThrowsWhenAStrategyProducesANonCssValue(): void
     {
         $strategy = new class implements LqipStrategy {

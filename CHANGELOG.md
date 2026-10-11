@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `background` option: composite onto a colour (`#ffffff`, `#fff` or
   `0xFFFFFF`) before anything else, for when the page colour is known. An
   invalid colour returns `null`, like an unknown mode.
+- `LqipResult::width()`, `height()` and `aspectRatio()`: the source image's
+  size as displayed, after EXIF orientation, which `getimagesize()` gets the
+  wrong way round for portrait phone photos. Attached to every result,
+  custom strategies' included. `toStyleAttribute(['aspect_ratio' => true])`
+  also reserves the shape (`aspect-ratio:1600/900`).
 
 ### Fixed
 
