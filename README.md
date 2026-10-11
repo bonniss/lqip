@@ -9,7 +9,7 @@ Give this library an image and it returns a tiny CSS value, a low-quality
 image placeholder (LQIP), that you put in `background-image`. The visitor sees
 a colour, a gradient or a blurred preview instead of an empty box.
 
-![The four modes on four photos](https://raw.githubusercontent.com/bonniss/lqip/main/docs/images/modes.jpg)
+![Every mode on four photos and a transparent cut-out](https://raw.githubusercontent.com/bonniss/lqip/main/docs/images/modes.jpg)
 
 - **Plain PHP, any framework.** One static call, a string back. No config,
   no database, no runtime dependencies.
@@ -25,7 +25,7 @@ instead. It wraps this library with Twig filters, caching and a settings page.
 
 - [Quick start](#quick-start)
 - [Choosing a mode](#choosing-a-mode)
-- [Usage](#usage): [Laravel](#laravel), [options](#options), [failures](#when-something-goes-wrong), [CSP](#content-security-policy)
+- [Usage](#usage): [Laravel](#laravel), [options](#options), [image size](#image-size), [transparent images](#transparent-images), [failures](#when-something-goes-wrong), [CSP](#content-security-policy)
 - [GD or Imagick](#gd-or-imagick)
 - [For developers](#for-developers): [how it works](#how-it-works), [measurements](#measurements), [extending](#extending), [contributing](#contributing)
 
@@ -66,13 +66,15 @@ stretching it. `toStyleAttribute()` (below) includes it for you.
 ## Choosing a mode
 
 Pass `['mode' => ...]` as the second argument. The picture at the top shows
-all four on real photos.
+every mode on real images.
 
 | Mode | Looks like | Size | Use it when |
 |---|---|---|---|
 | `dominant_color` *(default)* | One flat colour | ~32 chars | You want the cheapest thing that works everywhere |
 | `blur` | A blurred thumbnail | ~130 chars | You want it to look like the photo. Best choice for most sites |
+| `blur` + `smooth` | The same, without visible blocks | ~530 chars | You want the nicest look and can spare the bytes |
 | `gradient` | Four soft colour patches | ~256 chars | Your PHP cannot encode WebP (see below) |
+| `thumbhash` | A blurred thumbnail, drawn by the client | ~28 chars | An API or app that decodes ThumbHash itself. Not CSS |
 | `css_only` | Colour plus coarse light/dark layout | ~13 chars | Experimental. Read the caveats first |
 
 **`dominant_color`** picks the colour that covers the most of the image. It
@@ -91,9 +93,19 @@ server use `gradient` instead. Check with:
 PlaceholderGenerator::resolveDriver()->supportsFormat('webp'); // true / false
 ```
 
+Enlarging a 16 px image leaves faint soft blocks (visible in the room photo
+above). `'smooth' => true` wraps the thumbnail in an SVG that blurs it again at
+display size, the way `next/image` does, at about four times the size.
+
 **`gradient`** samples a 2×2 grid and paints four radial gradients. There is
 no image data, only CSS colours. Where WebP works, `blur` is both smaller and
 better, so `gradient` mainly exists for servers without WebP.
+
+**`thumbhash`** returns a [ThumbHash](https://evanw.github.io/thumbhash/), a
+base64 string of about 28 characters, for clients that decode it themselves:
+a JSON API feeding a JavaScript front end or a mobile app (decoders exist for
+JS, Swift, Kotlin and Rust). It is not CSS, so get it with `resultForFile()`
+and read `->value()`. For a server-rendered page, `blur` needs no script.
 
 **`css_only`** *(experimental)* packs the whole placeholder into one integer,
 `--lqip:87524`, which a stylesheet expands into gradients. The format is
@@ -156,17 +168,56 @@ inside the request.
 
 ### Options
 
-| Option      | Default          | Applies to | Meaning |
-|-------------|------------------|------------|---------|
-| `mode`      | `dominant_color` | all        | `dominant_color`, `gradient`, `blur`, `css_only`, or [your own](#extending) |
-| `driver`    | `auto`           | all        | `auto`, `gd`, `imagick`. See [GD or Imagick](#gd-or-imagick) |
-| `long_edge` | `16`             | `blur`     | Longest edge of the thumbnail in px (1-64). Bigger is sharper and longer |
-| `quality`   | `25`             | `blur`     | Encode quality (0-100) |
-| `blur`      | `true`           | `blur`     | Blur the thumbnail before encoding |
-| `format`    | `webp`           | `blur`     | `webp` or `jpg`. Falls back to `jpg` without WebP support |
+| Option       | Default          | Applies to | Meaning |
+|--------------|------------------|------------|---------|
+| `mode`       | `dominant_color` | all        | `dominant_color`, `gradient`, `blur`, `css_only`, `thumbhash`, or [your own](#extending) |
+| `driver`     | `auto`           | all        | `auto`, `gd`, `imagick`. See [GD or Imagick](#gd-or-imagick) |
+| `background` | `null`           | all        | A colour (`'#ffffff'`, `'#fff'`, `0xFFFFFF`) to put transparent images on first. See [transparent images](#transparent-images) |
+| `long_edge`  | `16`             | `blur`     | Longest edge of the thumbnail in px (1-64). Bigger is sharper and longer |
+| `quality`    | `25`             | `blur`     | Encode quality (0-100) |
+| `blur`       | `true`           | `blur`     | Blur the thumbnail before encoding |
+| `smooth`     | `false`          | `blur`     | Blur again at display size with an SVG filter. No visible blocks, ~4× the size |
+| `format`     | `webp`           | `blur`     | `webp` or `jpg`. Falls back to `jpg` without WebP support |
 
-Out-of-range numbers are clamped. An unknown `mode` or `driver` returns
-`null`.
+Out-of-range numbers are clamped. An unknown `mode` or `driver`, or a
+`background` that is not a colour, returns `null`.
+
+### Image size
+
+Every result also carries the image's size, so you can reserve its space and
+stop the page jumping when the photo arrives:
+
+```php
+$result = PlaceholderGenerator::resultForFile('/path/to/photo.jpg');
+
+$result->width();        // 1600
+$result->height();       // 1067
+$result->aspectRatio();  // 1.4995...
+$result->toStyleAttribute(['aspect_ratio' => true]);
+// "background-image:...;background-size:cover;aspect-ratio:1600/1067"
+```
+
+This is the size the photo is *displayed* at. A portrait phone photo is often
+stored sideways with an EXIF flag to rotate it; `getimagesize()` reports it
+the wrong way round, this does not.
+
+### Transparent images
+
+Logos and cut-out product shots keep their transparency:
+
+- `dominant_color` uses only the painted pixels, made as see-through as the
+  image is empty: a red logo filling half its box gives
+  `linear-gradient(#ff000080,#ff000080)`.
+- `gradient` gives each corner its own transparency.
+- `blur` keeps the shape, as a transparent WebP. Transparency costs bytes:
+  the cut-out above is ~330 characters against ~130 for a photo. A JPEG
+  fallback has no transparency and is put on white.
+- `thumbhash` keeps transparency too.
+- `css_only` returns `null`: its format cannot express transparency.
+
+If you know the page colour behind the image, pass it as `background`. The
+image is put on that colour first and every mode treats it as opaque, which
+also gives `css_only` something to encode.
 
 ### When something goes wrong
 
@@ -174,28 +225,32 @@ Out-of-range numbers are clamped. An unknown `mode` or `driver` returns
 
 - the image is missing, unreadable or broken;
 - it is larger than 60 megapixels;
-- neither GD nor Imagick is installed.
+- neither GD nor Imagick is installed;
+- the image is entirely transparent, or is transparent at all and the mode is
+  `css_only`.
 
 Nothing throws, and nothing emits a PHP warning. Frameworks often turn a
 warning into an error page, and placeholders are usually rendered inside
 templates.
 
 The single exception is a programming mistake. `css_only` returns a CSS
-custom property, not a `background-image` value, so asking `forFile()` for it
-throws `NotCssRepresentable`. Use `resultForFile()` / `resultForBytes()`,
-which work with every mode and tell you what you got:
+custom property and `thumbhash` a hash, neither of which is a
+`background-image` value, so asking `forFile()` for them throws
+`NotCssRepresentable`. Use `resultForFile()` / `resultForBytes()`, which work
+with every mode and tell you what you got:
 
 ```php
 $result = PlaceholderGenerator::resultForFile('/path/to/photo.jpg', ['mode' => 'css_only']);
 
-$result->kind();             // "css_var" (the other modes give "css")
+$result->kind();             // "css_var" ("css" for the CSS modes, "hash" for thumbhash)
 $result->value();            // "87524"
 $result->toCss();            // null: not usable as a background-image
 $result->toStyleAttribute(); // "--lqip:87524"
 ```
 
-For the other modes `toStyleAttribute()` gives
-`background-image:linear-gradient(#b5b2a5,#b5b2a5);background-size:cover`.
+For the CSS modes `toStyleAttribute()` gives
+`background-image:linear-gradient(#b5b2a5,#b5b2a5);background-size:cover`,
+and for `thumbhash` an empty string.
 
 ### Content-Security-Policy
 
@@ -245,7 +300,7 @@ change it.
 bytes ──► Driver: decode, shrink to a 256 px working copy
               │
               ▼
-          Image::sample(w, h) ──► Raster (a few dozen pixels, a PHP int array)
+          Image::sample(w, h) ──► Raster (a few dozen pixels, PHP int arrays)
               │
               ▼
           Strategy (one per mode, plain PHP) ──► LqipResult
@@ -263,8 +318,17 @@ bytes ──► Driver: decode, shrink to a 256 px working copy
   `Raster` in plain PHP and never touch GD or Imagick. That is why both
   engines agree, why strategies are testable without an engine, and why a
   third engine would be one new class.
+- **`Support\Raster`** keeps colour and alpha apart: colour as `0xRRGGBB`,
+  alpha in its own array that is `null` for an opaque image. Opaque images
+  therefore take exactly the path they always did. Anything that averages
+  colour weights it by alpha, so the meaningless colour of a transparent
+  pixel never bleeds in; both engines resample that way once GD's alpha
+  blending is off. The `background` option is `Drivers\FlattenedImage`, a
+  decorator that flattens every sample, so no strategy needs to know about it.
 - **`Support\GaussianBlur`** reproduces GD's `IMG_FILTER_GAUSSIAN_BLUR` bit
-  for bit. The test suite checks it against `imagefilter()`.
+  for bit on opaque images. The test suite checks it against `imagefilter()`.
+  Images with alpha get an alpha-weighted variant, where GD has nothing to
+  match.
 - **`Support\DominantColor`** is its own quantizer: median cut, then k-means,
   then merging clusters closer than 40 RGB units, then counting pixels. GD's
   quantizer gives different results on different libgd builds and Imagick's
@@ -274,6 +338,13 @@ bytes ──► Driver: decode, shrink to a 256 px working copy
   without `ext-exif`. It is applied to the tiny sample, not the full image.
 - **`Support\LqipInteger` / `Support\Oklab`** are the `css_only` codec,
   verified against the format's published reference value.
+- **`Support\ThumbHash`** is a port of the MIT reference encoder and decoder,
+  checked against the JS reference's own output. It rounds like JavaScript's
+  `Math.round`, not PHP's `round()`, which pre-rounds before PHP 8.4 and
+  flipped a bit in one hash in testing.
+- **`LqipResult`** gets the image's displayed size attached by
+  `PlaceholderGenerator` after the strategy runs, so custom strategies get it
+  for free.
 
 ### Measurements
 
@@ -290,6 +361,14 @@ edge, length of the value actually sent; RMSE is against the source on a
 | `blur` AVIF q50 | 478 | — |
 | `gradient` | 256 | — |
 | `css_only` | 13 | — |
+| `thumbhash` | 28 | — |
+
+- `smooth` adds ~400 characters (four README photos: 525-541 against
+  122-138). Its blur radius, 1 miniature pixel, was chosen from a rendered
+  comparison of 0.5, 1 and 1.5.
+- `thumbhash` samples 32 px rather than the reference's 100: on 41 photos,
+  30 hashes came out identical and the rest decode within 2.1/255, at 1.4 ms
+  per encode instead of 12.7.
 
 - AVIF is 4× larger than WebP at this size and 280× slower to encode, so it
   is not offered.
@@ -377,9 +456,9 @@ If you change what a mode outputs, regenerate the picture at the top
 (`docs/render-examples.php` describes how).
 
 Ideas on the roadmap: a `css_only` decode stylesheet (it must be written
-independently, because the reference one has no licence), a `thumbhash`
-mode, and an option to skip transparent images. See
-[CHANGELOG.md](CHANGELOG.md) for what changed between versions.
+independently, because the reference one has no licence), and a vips driver
+if it measures faster than Imagick. See [CHANGELOG.md](CHANGELOG.md) for what
+changed between versions.
 
 ## Non-goals
 
@@ -392,6 +471,8 @@ mode, and an option to skip transparent images. See
 - The `css_only` format is Lean Rada's, from
   [leanrada.com/notes/css-only-lqip](https://leanrada.com/notes/css-only-lqip/).
 - The colour maths is Björn Ottosson's [Oklab](https://bottosson.github.io/posts/oklab/).
+- ThumbHash is Evan Wallace's ([evanw/thumbhash](https://github.com/evanw/thumbhash),
+  MIT); `Support\ThumbHash` is a port and carries its licence.
 - The example photos are CC0, from Wikimedia Commons. See
   [docs/images/source/SOURCES.md](docs/images/source/SOURCES.md).
 

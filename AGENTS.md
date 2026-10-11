@@ -34,6 +34,23 @@ Done:
   would be one class, and why strategies are testable without an engine.
   `Support\GaussianBlur` is GD's convolution reproduced bit for bit (tested
   against `imagefilter`), so blur measurements made on GD still hold.
+- **Transparency is kept** (0.3). `Raster` carries an alpha plane that is
+  null for opaque images, so opaque output stayed byte-identical (checked on
+  real photos, both drivers). GD only keeps alpha with blending off on its
+  canvases (`GdDriver::canvas()`); colour is then alpha-weighted when
+  resampling. Per-mode behaviour is a judgement recorded in each strategy;
+  `css_only` returns null, like its reference. `background` flattens first,
+  via the `FlattenedImage` decorator.
+- Every result carries the displayed size (`LqipResult::width()/height()`),
+  attached by `PlaceholderGenerator`, not by strategies.
+- `blur` + `smooth`: the miniature wrapped in an SVG `feGaussianBlur`, the
+  next/image technique, written from the principle. Off by default (~4× size).
+- `thumbhash`: `Support\ThumbHash` is a port of the MIT JS reference, licence
+  in its docblock. Tests use the JS reference's own output as expected values
+  - **not** srwiez/thumbhash, which uses PHP `round()` (pre-rounds before 8.4)
+  and disagrees with `Math.round`; hence `jsRound()`. Hashes of flat or
+  perfectly symmetric images depend on the last bit of `cos()` and differ
+  between libm builds; the test allows that for those cases only.
 - EXIF orientation via `Support\ExifOrientation` (pure PHP, no `ext-exif`),
   applied to the tiny sample in `Raster::orient()`.
 - PHP 7.4–8.5. No constructor promotion, union types or `mixed`, and
@@ -123,10 +140,6 @@ Not done (roadmap, in rough priority order):
   stylesheet here has to be written independently from the bit layout, which is
   a data format rather than expressive code. It is also the one artifact
   PHPUnit cannot verify — it needs manual browser checking.
-- `thumbhash` strategy — wrap `srwiez/thumbhash` (pure PHP), aimed at
-  headless/API consumers who already run client JS.
-- `on_transparency` option (`ignore`|`skip`). Every mode currently composites
-  alpha onto black; the `css_only` reference instead skips transparent images.
 - A vips driver (`jcupitt/vips`, needs FFI) — only worth it if measured faster
   than Imagick; FFI is off on most shared hosting.
 - GD's working copy is one `imagecopyresampled()` over the full bitmap, which
