@@ -1,8 +1,8 @@
 {
     "name": "bonniss26/lqip",
-    "description": "Framework-agnostic LQIP (low-quality image placeholder) generator: dominant colour, CSS gradient, blurred data URI and CSS-only modes, on GD or Imagick.",
+    "description": "Framework-agnostic LQIP (low-quality image placeholder) generator: dominant colour, CSS gradient, blurred thumbnail, ThumbHash and CSS-only modes, on GD or Imagick. No dependencies.",
     "type": "library",
-    "keywords": ["lqip", "placeholder", "blurhash", "image", "lazy-loading", "gd", "imagick", "performance"],
+    "keywords": ["lqip", "placeholder", "thumbhash", "blur", "image", "lazy-loading", "gd", "imagick", "performance"],
     "homepage": "https://github.com/bonniss/lqip",
     "license": "MIT",
     "authors": [

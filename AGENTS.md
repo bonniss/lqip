@@ -24,7 +24,7 @@ must not point there.
 
 Done:
 
-- Four modes, one class each under `src/Strategies/`, behind the
+- Five modes, one class each under `src/Strategies/`, behind the
   `Strategies\LqipStrategy` interface. `PlaceholderGenerator::extend()` lets
   callers register a new mode or override a built-in one.
 - **Engines behind `Drivers\Driver`** (`GdDriver`, `ImagickDriver`). A driver
@@ -57,9 +57,9 @@ Done:
   `imagedestroy()` only on PHP 7 (8.5
   deprecates it, and a deprecation is a diagnostic frameworks turn into a
   failed request). CI covers every minor version with GD and with GD+Imagick.
-- `LqipResult` value object: strategies return a tagged value (`css` or
-  `css_var`) rather than a bare string, because `css_only` produces something
-  that is *not* a `background-image` value. `forFile()`/`forBytes()` return the
+- `LqipResult` value object: strategies return a tagged value (`css`,
+  `css_var` or `hash`) rather than a bare string, because `css_only` and
+  `thumbhash` produce something that is *not* a `background-image` value. `forFile()`/`forBytes()` return the
   CSS string and throw `NotCssRepresentable` for a non-CSS mode;
   `resultForFile()`/`resultForBytes()` are the richer siblings. That throw sits
   deliberately outside `resultForBytes()`'s `catch (Throwable)`, which exists

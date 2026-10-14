@@ -29,7 +29,8 @@ use Throwable;
  *
  * - resultForFile()/resultForBytes() return an LqipResult, which also says what
  *   kind of value it is. Needed for `css_only`, whose output is a bare integer
- *   for a CSS custom property rather than a background-image value. Asking the
+ *   for a CSS custom property, and `thumbhash`, whose output is a hash for a
+ *   client-side decoder - neither is a background-image value. Asking the
  *   CSS-returning methods for such a mode throws NotCssRepresentable.
  *
  * Framework-agnostic: no caching, no settings model, no media-library
@@ -104,8 +105,8 @@ class PlaceholderGenerator
     protected static $defaultDriver = null;
 
     /**
-     * Register (or override) a strategy for a mode name, e.g. a future
-     * `thumbhash` implementation living outside this package.
+     * Register (or override) a strategy for a mode name, e.g. a BlurHash
+     * encoder living outside this package.
      */
     public static function extend(string $mode, LqipStrategy $strategy): void
     {

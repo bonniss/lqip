@@ -26,7 +26,7 @@ instead. It wraps this library with Twig filters, caching and a settings page.
 - [Quick start](#quick-start)
 - [Choosing a mode](#choosing-a-mode)
 - [Usage](#usage): [Laravel](#laravel), [options](#options), [image size](#image-size), [transparent images](#transparent-images), [failures](#when-something-goes-wrong), [CSP](#content-security-policy)
-- [GD or Imagick](#gd-or-imagick)
+- [GD or Imagick](#gd-or-imagick), [requirements](#requirements)
 - [For developers](#for-developers): [how it works](#how-it-works), [measurements](#measurements), [extending](#extending), [contributing](#contributing)
 
 ## Quick start
@@ -91,6 +91,7 @@ server use `gradient` instead. Check with:
 
 ```php
 PlaceholderGenerator::resolveDriver()->supportsFormat('webp'); // true / false
+// resolveDriver() is null when neither GD nor Imagick is installed
 ```
 
 Enlarging a 16 px image leaves faint soft blocks (visible in the room photo
@@ -102,7 +103,8 @@ no image data, only CSS colours. Where WebP works, `blur` is both smaller and
 better, so `gradient` mainly exists for servers without WebP.
 
 **`thumbhash`** returns a [ThumbHash](https://evanw.github.io/thumbhash/), a
-base64 string of about 28 characters, for clients that decode it themselves:
+base64 string of about 28 characters (a few more for an image with
+transparency), for clients that decode it themselves:
 a JSON API feeding a JavaScript front end or a mobile app (decoders exist for
 JS, Swift, Kotlin and Rust). It is not CSS, so get it with `resultForFile()`
 and read `->value()`. For a server-rendered page, `blur` needs no script.
@@ -113,8 +115,8 @@ and read `->value()`. For a server-rendered page, `blur` needs no script.
 
 - **You supply the decode stylesheet.** This package does not ship one yet.
   The column in the picture above is an approximate rendering.
-- It needs mid-2024 browsers (CSS `round()`, `mod()`, `oklab()`). Older ones
-  show **nothing at all**, not even a flat colour.
+- It needs mid-2024 browsers (CSS `round()`, `mod()`, `oklab()` and relative
+  colour syntax). Older ones show **nothing at all**, not even a flat colour.
 - It is very coarse. On evenly lit photos about half the time the layout
   vanishes and only one colour is left. Near-grey images can come out tinted,
   because the format deliberately avoids plain grey.
@@ -129,8 +131,12 @@ the safer small option.
 ```php
 use Bonniss26\Lqip\PlaceholderGenerator;
 
-PlaceholderGenerator::forFile('/path/to/photo.jpg');                 // from a file
-PlaceholderGenerator::forBytes($imageBytes, ['mode' => 'blur']);     // from bytes, e.g. S3
+// From a file:
+PlaceholderGenerator::forFile('/path/to/photo.jpg');
+// "linear-gradient(#b5b2a5,#b5b2a5)"
+
+// From bytes you already have, e.g. downloaded from S3:
+PlaceholderGenerator::forBytes($imageBytes, ['mode' => 'blur']);
 // "url('data:image/webp;base64,UklGRkYAAABXRUJQVlA4IDoAAADwAQCd...')"
 ```
 
@@ -150,12 +156,22 @@ use Illuminate\Support\Facades\Storage;
 function lqip(string $path): string
 {
     $disk = Storage::disk('public');
+    if (!$disk->exists($path)) {
+        return '';
+    }
 
     // The modification time in the key regenerates it when the file is replaced.
-    return Cache::rememberForever(
-        'lqip:' . $path . ':' . $disk->lastModified($path),
-        fn () => PlaceholderGenerator::forBytes($disk->get($path)) ?? ''
-    );
+    $key = 'lqip:' . $path . ':' . $disk->lastModified($path);
+    if (($cached = Cache::get($key)) !== null) {
+        return $cached;
+    }
+
+    $placeholder = PlaceholderGenerator::forBytes((string) $disk->get($path));
+    if ($placeholder !== null) {
+        Cache::forever($key, $placeholder); // a failure is not cached, so it is retried
+    }
+
+    return $placeholder ?? '';
 }
 ```
 
@@ -190,11 +206,11 @@ stop the page jumping when the photo arrives:
 ```php
 $result = PlaceholderGenerator::resultForFile('/path/to/photo.jpg');
 
-$result->width();        // 1600
-$result->height();       // 1067
-$result->aspectRatio();  // 1.4995...
+$result->width();        // 800
+$result->height();       // 533
+$result->aspectRatio();  // 1.5009...
 $result->toStyleAttribute(['aspect_ratio' => true]);
-// "background-image:...;background-size:cover;aspect-ratio:1600/1067"
+// "background-image:...;background-size:cover;aspect-ratio:800/533"
 ```
 
 This is the size the photo is *displayed* at. A portrait phone photo is often
@@ -224,14 +240,22 @@ also gives `css_only` something to encode.
 `forFile()` and `forBytes()` return `null` when:
 
 - the image is missing, unreadable or broken;
+- it is not JPEG, PNG, GIF, WebP, BMP or AVIF (SVG, HEIC and TIFF are
+  refused), or the engine lacks support for that format;
 - it is larger than 60 megapixels;
 - neither GD nor Imagick is installed;
-- the image is entirely transparent, or is transparent at all and the mode is
-  `css_only`.
+- the `mode`, `driver` or `background` option is invalid;
+- the mode is `dominant_color` and the image is entirely transparent, or the
+  mode is `css_only` and the image has any transparency;
+- encoding the `blur` thumbnail fails.
 
 Nothing throws, and nothing emits a PHP warning. Frameworks often turn a
 warning into an error page, and placeholders are usually rendered inside
 templates.
+
+One side effect to know about: while GD decodes a large photo, the library
+raises `memory_limit` to 512M (a 24 MP photo needs ~100 MB as a bitmap) and
+puts it back afterwards.
 
 The single exception is a programming mistake. `css_only` returns a CSS
 custom property and `thumbhash` a hash, neither of which is a
@@ -427,14 +451,19 @@ vendor/bin/phpunit
 
 The test images are generated in code, so there are no binary fixtures.
 Tests for a driver whose extension is missing are skipped. To run them all,
-use Docker:
+use Docker. This copies the checkout into the container, so your own
+`vendor/` is left alone (bash or zsh; in Git Bash on Windows, put
+`MSYS_NO_PATHCONV=1` in front):
 
 ```bash
-docker run --rm -v "$PWD":/app -w /app php:8.3-cli sh -c \
-  "curl -sSL https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions -o /usr/local/bin/install-php-extensions \
-   && chmod +x /usr/local/bin/install-php-extensions && install-php-extensions gd imagick \
-   && vendor/bin/phpunit"
+docker run --rm -v "$PWD":/src:ro php:8.3-cli sh -c '
+  curl -sSL https://github.com/mlocati/docker-php-extension-installer/releases/latest/download/install-php-extensions -o /usr/local/bin/install-php-extensions
+  chmod +x /usr/local/bin/install-php-extensions && install-php-extensions gd imagick @composer
+  cp -r /src /app && cd /app && rm -rf vendor composer.lock
+  composer install -q && vendor/bin/phpunit'
 ```
+
+Change `8.3` to test another PHP version (7.4 to 8.5).
 
 CI runs every PHP version from 7.4 to 8.5, with GD and with GD + Imagick.
 
@@ -452,8 +481,9 @@ Ground rules that pull requests are held to:
   tests that show why.
 - One logical change per commit. The commit message says why, not only what.
 
-If you change what a mode outputs, regenerate the picture at the top
-(`docs/render-examples.php` describes how).
+If you change what a mode outputs, regenerate the picture at the top. It needs
+headless Chrome and ImageMagick's `magick` command; the three steps are at
+the top of `docs/render-examples.php`.
 
 Ideas on the roadmap: a `css_only` decode stylesheet (it must be written
 independently, because the reference one has no licence), and a vips driver

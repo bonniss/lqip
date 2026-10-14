@@ -39,7 +39,7 @@ two new ways to render: `smooth` blur and `thumbhash`.
   of a 16 px image no longer shows soft blocks. Costs ~530 characters against
   ~130, so it is off by default.
 - `thumbhash` mode: a [ThumbHash](https://evanw.github.io/thumbhash/) as
-  base64, ~30 characters, for APIs and apps that decode it client-side. Keeps
+  base64, ~28 characters (~36 with transparency), for APIs and apps that decode it client-side. Keeps
   transparency and the approximate aspect ratio. A port of the MIT reference
   implementation, checked against it, with no new dependency. Returns a
   result of the new kind `LqipResult::KIND_HASH`, which is not CSS:

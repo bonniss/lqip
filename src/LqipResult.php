@@ -31,8 +31,9 @@ final class LqipResult
     const KIND_HASH = 'hash';
 
     /**
-     * These strings are part of the wire format: the planned WinterCMS adapter
-     * caches generated placeholders in a database alongside their kind. When the
+     * These strings are part of the wire format: the WinterCMS plugin
+     * (bonniss26/wn-imagery-plugin) caches generated placeholders in a database
+     * alongside their kind. When the
      * PHP floor moves to 8.1 these should become a backed `enum LqipKind: string`
      * keeping exactly these backing values, so already-cached rows stay readable.
      */
